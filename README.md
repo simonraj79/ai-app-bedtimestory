@@ -214,7 +214,9 @@ and takes no parameter that could widen it.
 Charts are hand-written inline SVG — no chart library, no build step. One mark
 colour throughout, because genre and child names are nominal: colouring each bar
 separately would re-encode what bar length already shows. Design notes and the
-measured contrast figures are in `CLAUDE.md` → *Charts*.
+contrast was measured, not eyeballed: the gold mark reads **10.77:1** against the
+page surface (marks need 3:1), axis text 6.23:1 (text needs 4.5:1), and gridlines
+sit at 1.41:1 — recessive by design.
 
 **Usage** — `admin.html`, restricted to `ADMIN_EMAIL`. Not linked from the hub.
 The owner reaches it from a link on their own stats page, shown only when the
@@ -232,9 +234,32 @@ gets `403`.
 
 Sign-ins are counted from the `sign_ins` table rather than `users.last_seen_at`,
 which is overwritten on every request and so cannot answer "how many times".
-Rows are deduped on the ID token's `iat` claim, so a token reused across many
-requests counts once. SQL for both views is in `CLAUDE.md` → *Reading the
-tracking data*.
+Rows are deduped on the ID token's `iat` claim — fixed for a token's life and
+different only when Google issues a new one — so a token reused across fifty
+requests counts once.
+
+Straight from the database, if you want the shape rather than the summary:
+
+```sql
+-- Who has signed in, how often, when they were last about.
+SELECT u.email, count(g.id) AS sign_ins,
+       to_char(max(u.last_seen_at), 'YYYY-MM-DD HH24:MI') AS last_seen
+FROM users u LEFT JOIN sign_ins g ON g.user_id = u.id
+GROUP BY u.id, u.email ORDER BY sign_ins DESC;
+
+-- Sign-ins per day, quiet days included. generate_series, not GROUP BY: a day
+-- with no rows cannot be grouped, so grouping alone silently drops it and the
+-- chart draws a misleadingly continuous line.
+SELECT d.day, count(g.id) AS sign_ins
+FROM (SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day) d
+LEFT JOIN sign_ins g ON g.created_at::date = d.day
+GROUP BY d.day ORDER BY d.day;
+
+-- Came back, or signed in once and never returned?
+SELECT count(*) FILTER (WHERE n = 1) AS one_and_done,
+       count(*) FILTER (WHERE n > 1) AS returned
+FROM (SELECT user_id, count(*) AS n FROM sign_ins GROUP BY user_id) s;
+```
 
 ## API
 
@@ -340,8 +365,7 @@ curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep GOOGLE_CLIENT_ID
 `auto_select`. One Tap is a prompt rather than a sign-in, so dismissing it left
 people signed out and it reappeared on the next page — and it depends on FedCM,
 third-party cookies and no content blocker, so it worked on some machines and
-silently did nothing on others. The rendered button is the only way in. Reasoning
-in full: `CLAUDE.md` → *One Tap is a prompt, not a sign-in*.
+silently did nothing on others. The rendered button is the only way in.
 
 With an active Google session that button renders **personalised**, showing the
 account name inside its iframe. It looks like a "sign in as…" card but is one
@@ -412,9 +436,26 @@ CORS needs the frontend's URL. Neither exists first, so it takes two passes:
 Sign-in joins the circular dependency rather than escaping it: the OAuth client
 needs the Vercel origin, which does not exist until step 3.
 
-Render's Postgres refuses external connections by default (`ipAllowList: []`),
-and reports it as `SSL connection has been closed unexpectedly`. To run
-migrations: add your IP as a `/32`, migrate, remove it. See `CLAUDE.md`.
+Render's Postgres refuses external connections by default (`ipAllowList` is
+`null`) and reports it as **`SSL connection has been closed unexpectedly`** —
+nothing is wrong with SSL, the connection is dropped mid-handshake. Chasing
+certificates here wastes an hour. Open to one IP, migrate, close again:
+
+```bash
+IP=$(curl -s https://api.ipify.org)
+# 1. open
+curl -X PATCH -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+  https://api.render.com/v1/postgres/<db-id> \
+  -d "{\"ipAllowList\":[{\"cidrBlock\":\"$IP/32\",\"description\":\"temporary - migration\"}]}"
+# 2. migrate through psycopg with sslmode="require" (there is no psql here)
+# 3. close
+curl -X PATCH -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+  https://api.render.com/v1/postgres/<db-id> -d '{"ipAllowList":[]}'
+```
+
+Close it in a `finally` block — an interruption must not leave production
+reachable. Then prove it is shut by attempting a connection and getting refused,
+rather than trusting the API's own report.
 
 A free Render Postgres expires 30 days after it is created, so don't create it
 before you intend to deploy. `GET /v1/postgres/<id>` reports the plan and any
@@ -463,7 +504,7 @@ everyone's data — which is exactly what `/stories` did before sign-in existed.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Failed to fetch` in the browser, **nothing in the backend log** | CORS blocked the preflight — the request never arrived | Check `FRONTEND_ORIGINS` matches the frontend origin exactly, scheme and port included |
-| New routes 404, edits do nothing, **no access-log lines** | A stale uvicorn worker is still serving | See `CLAUDE.md` → orphaned workers. Check reality with `curl localhost:8000/openapi.json` |
+| New routes 404, edits do nothing, **no access-log lines** | A stale uvicorn worker is still serving — killing by port only kills the listener and the reloader respawns it, and the worker's command line says `spawn_main`, not `uvicorn` | Ask the running server what it is: `curl localhost:8000/openapi.json`. Kill by matching `uvicorn\|spawn_main`, then confirm port 8000 is free. `Reloading...` in the log is a claim, not a confirmation — `grep -c "Started server process"` must *increase* |
 | `KeyError: 'GEMINI_API_KEY'` | No `.env` in the project root | `cp .env.example .env` and fill it in |
 | `ModuleNotFoundError: No module named 'requests'` at startup | `google-auth` installed without its extra | The pin must be `google-auth[requests]`. Re-run `pip install -r requirements.txt` |
 | Every sign-in fails, `401`, nothing obviously wrong | `GOOGLE_CLIENT_ID` doesn't match the token's `aud` | It must be identical in `.env`, Render, **and** `frontend/config.js` |
@@ -480,5 +521,9 @@ everyone's data — which is exactly what `/stories` did before sign-in existed.
 
 ## More
 
-- `CLAUDE.md` — conventions, insights, and the full gotcha list
 - `PRD.md` — scope, open decisions, milestones, risks
+
+`CLAUDE.md` is referenced in some commit messages. It is **local working notes**
+— account names, resource ids and operational detail — and is deliberately not
+published, so it is not in this repo. Everything needed to run, deploy and debug
+this project is in this file.
