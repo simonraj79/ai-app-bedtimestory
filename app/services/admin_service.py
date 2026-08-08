@@ -3,7 +3,14 @@ from psycopg.rows import dict_row
 from fastapi import HTTPException
 
 from app.database import get_conn
-from app.schemas import UsageAction, UsageDay, UsageResponse, UsageTotals, UsageUser
+from app.schemas import (
+    UsageAction,
+    UsageDay,
+    UsageGenre,
+    UsageResponse,
+    UsageTotals,
+    UsageUser,
+)
 
 # Rows written before sign-in existed have no owner. The feed names them rather
 # than dropping them, so the totals and the list agree with each other.
@@ -60,6 +67,22 @@ def fetch_usage() -> UsageResponse:
                 )
                 daily = [UsageDay(**row) for row in cur.fetchall()]
 
+                # Stories written before the stats columns existed have a NULL
+                # genre, and "unanalysed" is not a genre - counting them would
+                # invent a category and average their missing word counts as
+                # nothing. Rounding happens in SQL so the numbers arrive ready
+                # to print, and the tie-break on genre keeps the order stable
+                # between calls rather than however Postgres happened to group.
+                cur.execute(
+                    "SELECT genre, "
+                    "       count(*)                                    AS stories, "
+                    "       round(avg(word_count))::int                 AS avg_words, "
+                    "       round(avg(grade_level)::numeric, 1)::float8 AS avg_grade "
+                    "FROM stories WHERE genre IS NOT NULL "
+                    "GROUP BY genre ORDER BY count(*) DESC, genre"
+                )
+                genres = [UsageGenre(**row) for row in cur.fetchall()]
+
                 # Both tables, one timeline. The ordering and the cut happen
                 # inside the union so it is the real timestamps being compared,
                 # not the display strings.
@@ -81,7 +104,9 @@ def fetch_usage() -> UsageResponse:
                 )
                 recent = [UsageAction(**row) for row in cur.fetchall()]
 
-        return UsageResponse(totals=totals, users=users, daily=daily, recent=recent)
+        return UsageResponse(
+            totals=totals, users=users, daily=daily, genres=genres, recent=recent
+        )
     except psycopg.Error:
         raise HTTPException(
             status_code=502,

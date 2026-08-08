@@ -396,6 +396,55 @@ body.bedtime .authbar .signout:active {
     border-color: #e5c98a;
 }
 
+/* --- Reading stats -------------------------------------------------------- */
+
+/* Specificity, because this file has been bitten by it: the rule that painted
+   every chip gold is `body.bedtime button` at (0,1,2). None of the selectors
+   below match a <button> at all - they are spans, a <p> and a <td> - so that
+   rule cannot reach them whatever the source order. .stat-strip, .hist-summary
+   and .genre are (0,1,0); .stat-strip .bit and .hist-summary .skipped are
+   (0,2,0). Nothing else in this file styles any of these classes. */
+.stat-strip {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #8f9bb8;
+}
+
+/* Wrapping is fine; wrapping in the middle of "1 min 33 s" is not. Each fact
+   stays whole and the line breaks between them, so a 360px phone gets two tidy
+   lines instead of a ragged three. */
+.stat-strip .bit {
+    white-space: nowrap;
+}
+
+/* The genre is a keyword guess and carries a title= explaining itself. The
+   dotted underline is the only hint that there is something to hover; without
+   it nobody would ever find the explanation. */
+.stat-strip .genre {
+    border-bottom: 1px dotted #4a5570;
+    cursor: help;
+}
+
+/* The backend's closed set may be lower-case; this makes it read as a label
+   either way, without the page having to know which. */
+.genre {
+    text-transform: capitalize;
+}
+
+/* Summary across the stories on screen - deliberately quieter than the story. */
+.hist-summary {
+    margin: 0.2rem 0 0.9rem;
+    font-size: 0.85rem;
+    color: #8f9bb8;
+}
+
+.hist-summary .skipped {
+    display: block;
+    font-size: 0.8rem;
+    color: #6a7186;
+}
+
 /* Writing indicator - a wait with no feedback reads as a hang. */
 .writing {
     margin-top: 1.8rem;
@@ -477,9 +526,15 @@ body.bedtime #history .q {
     font-weight: normal;
 }
 
+/* Timestamp, word count and genre on one line. Truncated rather than wrapped:
+   this list is scrolled one-handed in the dark, and a summary that grows a
+   third line moves every row under the thumb. */
 #history .meta {
     font-size: 0.8rem;
     color: #6a7186;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #history .a {

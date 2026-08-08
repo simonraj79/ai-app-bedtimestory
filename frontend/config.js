@@ -23,6 +23,59 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// --- Reading stats: presentation only ---------------------------------------
+//
+// story.html and admin.html both put reading numbers in front of a person, so
+// the wording lives here. Two pages quietly disagreeing about what "grade 3.2"
+// means is exactly what a duplicated helper produces.
+
+// A Flesch-Kincaid grade is a US school year. Outside the US it means nothing,
+// and inside it "grade 3.2" is still a number rather than something a parent
+// can act on. The band says what to expect; the age is the part someone already
+// knows about their own child.
+//
+// The age is DERIVED, not measured: US grade + 5 is the conventional rough
+// conversion, and the formula behind the grade counts syllables and sentence
+// length - not whether a child follows the story. It is a hint, which is why
+// the wording has to keep sounding like one ("about age 8", never "age 8").
+function readingBand(gradeLevel) {
+  // Number(null) is 0, which would come back "very easy" - an invented answer
+  // for a story that was never measured. Reject the empty cases first.
+  if (gradeLevel === null || gradeLevel === undefined) return "—";
+  const grade = Number(gradeLevel);
+  if (!Number.isFinite(grade)) return "—";
+
+  // Short sentences and short words can score below grade 1, and the formula
+  // genuinely goes negative; the floor stops that reading as "about age 2".
+  const age = Math.max(5, Math.round(grade) + 5);
+
+  // "to read alone" is load-bearing, not padding. STORY_SYSTEM_PROMPT asks for
+  // words a five-year-old understands, and these stories still score around
+  // grade 3-4 - because the formula counts syllables and sentence length, not
+  // whether a child follows the story. A parent of a four-year-old reading
+  // "about age 9" on tonight's story would reasonably think it was wrong for
+  // them. It is the age a child could read it THEMSELVES; being read to has no
+  // such floor. The band word is the part worth comparing between stories.
+  if (grade <= 1) return `very easy · age ${age} to read alone`;
+  if (grade <= 3) return `easy · age ${age} to read alone`;
+  if (grade <= 5) return `medium · age ${age} to read alone`;
+  if (grade <= 7) return `harder · age ${age} to read alone`;
+  return `hard · age ${age} to read alone`;
+}
+
+// Minutes and seconds, because "93 seconds" makes the reader do the division.
+// The caller must say what the time is FOR: this is read-ALOUD time at about
+// 130 words a minute, which is roughly half silent reading speed.
+function readingTime(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const total = Math.round(Number(seconds));
+  if (!Number.isFinite(total)) return "—";
+  if (total < 60) return `${total} s`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+}
+
 // --- Google sign-in ---------------------------------------------------------
 //
 // The OAuth client ID is PUBLIC BY DESIGN. It names the app to Google and rides

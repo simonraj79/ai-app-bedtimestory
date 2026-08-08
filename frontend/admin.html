@@ -48,6 +48,20 @@
             </table>
         </div>
 
+        <!-- Hidden until there is at least one genre row. An empty table with
+             headers and nothing under them reads as a query that broke. -->
+        <div id="genres-section" hidden>
+            <h2>Story genres</h2>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>Genre</th><th class="num">Stories</th><th class="num">Avg words</th><th>Reading level</th></tr>
+                    </thead>
+                    <tbody id="genres"></tbody>
+                </table>
+            </div>
+        </div>
+
         <h2>Recent activity</h2>
         <ol id="recent"><li class="empty">Nothing yet.</li></ol>
     </div>
@@ -104,6 +118,21 @@
           <td class="num">${escapeHtml(String(u.stories))}</td>
           <td class="num">${escapeHtml(String(u.questions))}</td>
           <td class="when">${escapeHtml(u.last_seen_at || "—")}</td>
+        </tr>`).join("");
+
+      // Genres come from a keyword heuristic over the story text, so this is a
+      // rough shape of what gets asked for, not a taxonomy. Rendered before the
+      // recent-activity block below, which returns early when it is empty.
+      // avg_grade goes through readingBand for the same reason it does on the
+      // story page: "3.2" is a number, "easy, about age 8" is an answer.
+      const genres = data.genres || [];
+      $("genres-section").hidden = !genres.length;
+      $("genres").innerHTML = genres.map(g => `
+        <tr>
+          <td class="genre">${escapeHtml(g.genre || "—")}</td>
+          <td class="num">${escapeHtml(String(g.stories))}</td>
+          <td class="num">${escapeHtml(typeof g.avg_words === "number" ? String(Math.round(g.avg_words)) : "—")}</td>
+          <td>${escapeHtml(readingBand(g.avg_grade))}</td>
         </tr>`).join("");
 
       const recent = $("recent");

@@ -46,6 +46,9 @@
     <div id="error" role="alert"></div>
 
     <h2>Earlier stories</h2>
+    <!-- Hidden until there are at least two stories with stats to summarise:
+         an "average" of one story is that story, wearing a bigger word. -->
+    <p id="history-summary" class="hist-summary" hidden></p>
     <ol id="history"><li class="empty">No stories yet.</li></ol>
 
     <script src="config.js"></script>
@@ -111,20 +114,83 @@
     }
 
     // --- History: collapsed, or ten full stories bury the page --------------
+    //
+    // Every stat can be null - stories written before the numbers existed have
+    // none, and never will. Anywhere they are missing this omits them rather
+    // than printing dashes: an older story should read as ordinary, not as one
+    // that failed to load.
+    //
+    // `typeof x === "number"` throughout, not a truthy test: a 0-word story and
+    // a negative grade are both real values that a truthy test would silently
+    // drop into the "no stats" branch.
     function renderHistory(items) {
       const list = $("history");
-      if (!items || !items.length) {
+      const rows = items || [];
+
+      // The summary describes the rows on this page, and only the ones that
+      // carry stats. It must never sound like it covers everything ever made -
+      // that is a larger number, and nothing here has it.
+      const counted = rows.filter(it => typeof it.word_count === "number");
+      const summaryEl = $("history-summary");
+      summaryEl.hidden = counted.length < 2;
+      if (counted.length >= 2) {
+        const skipped = rows.length - counted.length;
+        const words = counted.reduce((total, it) => total + it.word_count, 0);
+
+        const tally = {};
+        for (const it of counted) if (it.genre) tally[it.genre] = (tally[it.genre] || 0) + 1;
+        const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+
+        const graded = counted.filter(it => typeof it.grade_level === "number");
+        const bits = [`${escapeHtml(words.toLocaleString())} words`];
+        if (top) {
+          // "mostly" has to earn itself. Four genres one story each is not
+          // "mostly" anything, and saying so would be the first wrong number
+          // on the page.
+          const lead = top[1] * 2 >= counted.length ? "mostly" : "most often";
+          bits.push(`${lead} <span class="genre">${escapeHtml(top[0])}</span>`);
+        }
+        if (graded.length) {
+          const avg = graded.reduce((total, it) => total + it.grade_level, 0) / graded.length;
+          // readingBand owns the thresholds; here we want the band on its own,
+          // without the age it carries in the strip above.
+          bits.push(`usually ${escapeHtml(readingBand(avg).split(",")[0])}`);
+        }
+
+        const across = skipped
+          ? `Across ${counted.length} of your last ${rows.length} stories:`
+          : `Across your last ${rows.length} stories:`;
+        // The leading space is for copy-paste, not for the screen: the note is
+        // display:block, so the browser trims it, but without it the copied
+        // text reads "usually easy2 older stories have no reading stats."
+        const note = skipped
+          ? ` <span class="skipped">${skipped} older ${skipped === 1 ? "story has" : "stories have"} no reading stats.</span>`
+          : "";
+        summaryEl.innerHTML = `${across} ${bits.join(" · ")}${note}`;
+      }
+
+      if (!rows.length) {
         list.innerHTML = '<li class="empty">No stories yet.</li>';
         return;
       }
-      list.innerHTML = items.map(it => `
+      list.innerHTML = rows.map(it => {
+        // Word count and genre join the timestamp line rather than starting a
+        // third one. The summary line is styled to truncate, not wrap - this is
+        // read one-handed in the dark.
+        const meta = [escapeHtml(it.created_at)];
+        if (typeof it.word_count === "number") {
+          meta.push(`${escapeHtml(String(it.word_count))} words`);
+        }
+        if (it.genre) meta.push(`<span class="genre">${escapeHtml(it.genre)}</span>`);
+        return `
         <li><details>
           <summary>
             <span class="q">${escapeHtml(it.child_name)} — ${escapeHtml(it.theme)}</span>
-            <span class="meta">${escapeHtml(it.created_at)}</span>
+            <span class="meta">${meta.join(" · ")}</span>
           </summary>
           <div class="a">${escapeHtml(it.story)}</div>
-        </details></li>`).join("");
+        </details></li>`;
+      }).join("");
     }
 
     // /stories is per-user and authenticated, so there is nothing to fetch until
@@ -164,12 +230,44 @@
       writingTimers = [];
     }
 
-    function renderStory(text) {
+    // `stats` defaults to empty so a story with no numbers renders exactly as it
+    // did before this existed - no strip at all, rather than a row of dashes.
+    function renderStory(text, stats = {}) {
       const paras = text.trim().split(/\n\s*\n/)
         .map(p => `<p>${escapeHtml(p.trim())}</p>`).join("");
+
+      // "to read aloud" is load-bearing, not padding. The estimate is 130 words
+      // a minute - a parent reading out loud, roughly half silent reading speed
+      // - so a number labelled just "to read" looks wrong by a factor of two to
+      // anyone who checks it against the clock.
+      const bits = [];
+      if (typeof stats.word_count === "number") {
+        bits.push(`<span class="bit">${escapeHtml(String(stats.word_count))} words</span>`);
+      }
+      if (typeof stats.reading_seconds === "number") {
+        bits.push(`<span class="bit">${escapeHtml(readingTime(stats.reading_seconds))} to read aloud</span>`);
+      }
+      if (typeof stats.grade_level === "number") {
+        bits.push(`<span class="bit">${escapeHtml(readingBand(stats.grade_level))}</span>`);
+      }
+      if (stats.genre) {
+        // The genre is a keyword heuristic, so it can look arbitrary - "Animals"
+        // for a story about a boat. Holding or hovering the label shows the
+        // words that chose it rather than asking anyone to take it on trust.
+        const why = stats.genre_hits
+          ? ` title="chosen from: ${escapeHtml(stats.genre_hits)}"`
+          : "";
+        bits.push(`<span class="bit genre"${why}>${escapeHtml(stats.genre)}</span>`);
+      }
+      const strip = bits.length
+        ? `<div class="stat-strip">${bits.join(" · ")}</div>`
+        : "";
+
+      // Concatenated rather than one indented template: #answer is white-space:
+      // pre-wrap, so newlines between these blocks would render as real gaps.
       ansEl.innerHTML =
-        `<div class="story" id="story">${paras}</div>
-         <div class="story-tools">
+        `<div class="story" id="story">${paras}</div>` + strip +
+        `<div class="story-tools">
            <button type="button" id="smaller" aria-label="Smaller text">A−</button>
            <button type="button" id="bigger"  aria-label="Bigger text">A+</button>
            <button type="button" id="copy">Copy</button>
@@ -228,7 +326,14 @@
         // pass them through rather than inventing our own wording.
         if (!r.ok) throw new Error(data.detail || "Request failed");
         stopWriting();
-        renderStory(data.story);
+        // The stats are contracted onto the history rows, and the story just
+        // written is one of them. Match on the text rather than assuming it is
+        // first: the order of that list is the backend's business, and getting
+        // it wrong would caption this story with another night's numbers.
+        const stats = typeof data.word_count === "number"
+          ? data
+          : (data.history || []).find(it => it.story === data.story) || {};
+        renderStory(data.story, stats);
         renderHistory(data.history);
       } catch (e) {
         stopWriting();
