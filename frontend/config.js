@@ -22,3 +22,151 @@ function escapeHtml(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
   }[c]));
 }
+
+// --- Google sign-in ---------------------------------------------------------
+//
+// The OAuth client ID is PUBLIC BY DESIGN. It names the app to Google and rides
+// along in every sign-in request the browser makes, so it is not a credential
+// and cannot be kept private. The thing that must never appear in frontend/ is
+// the client *secret* - and this flow has none: the browser is handed a signed
+// ID token directly, and the backend checks that signature against Google's
+// public keys. That is how "nothing secret may ever live in frontend/" survives
+// bolting sign-in onto a static site.
+const GOOGLE_CLIENT_ID =
+  "722888382160-s5gggbictm3ehmgpu926m2u6ur55pb1r.apps.googleusercontent.com";
+
+// sessionStorage, not localStorage: this is a bearer token, and a phone handed
+// to somebody else should not still be signed in after the tab is closed.
+const TOKEN_KEY = "googleIdToken";
+
+// Google ID tokens last about an hour. Treating the last minute as already gone
+// stops a request leaving with a token that expires while it is in flight.
+const TOKEN_EXPIRY_SKEW_SECONDS = 60;
+
+// Set by initGoogleAuth() before the Google library loads, read once it lands.
+let authHandlers = null;
+
+// The middle segment of a JWT is base64url-encoded JSON.
+//
+// Reading it here is safe for DISPLAY ONLY. Nothing is verified: a JWT payload
+// is just text, and anyone can hand this page one that claims to be anybody.
+// The only authority on who the caller is, is the backend's signature check
+// against Google's public keys. Never branch on this for permission - not even
+// "is this the owner?" - or the admin page becomes a text field.
+function decodeJwtPayload(token) {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+}
+
+// The stored token, or null. Expiry is checked here rather than at each call
+// site so a stale token can never reach a fetch.
+function getToken() {
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  if (!token) return null;
+
+  const payload = decodeJwtPayload(token);
+  if (!payload || payload.exp - TOKEN_EXPIRY_SKEW_SECONDS <= Date.now() / 1000) {
+    sessionStorage.removeItem(TOKEN_KEY);
+    return null;
+  }
+  return token;
+}
+
+// Who the browser believes is signed in - for greeting them, nothing more.
+// See decodeJwtPayload: this is unverified.
+function currentUser() {
+  const token = getToken();
+  const payload = token && decodeJwtPayload(token);
+  if (!payload) return null;
+  return {email: payload.email, name: payload.name, picture: payload.picture};
+}
+
+// Headers for an authenticated call, or null when signed out. Callers check for
+// null rather than sending a header-less request the backend will 401 anyway.
+function authHeaders() {
+  const token = getToken();
+  if (!token) return null;
+  return {"Content-Type": "application/json", "Authorization": `Bearer ${token}`};
+}
+
+function handleGoogleCredential(response) {
+  sessionStorage.setItem(TOKEN_KEY, response.credential);
+  const user = currentUser();
+  // An unreadable credential leaves the page signed out rather than half in,
+  // where the UI says "signed in" and every request comes back 401.
+  if (user) authHandlers.onSignIn(user);
+}
+
+function signOut() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  // Without this, One Tap signs the same person straight back in and "sign out"
+  // looks like it did nothing.
+  if (window.google) google.accounts.id.disableAutoSelect();
+  authHandlers.onSignOut();
+  renderGoogleButton();
+}
+
+// Called again after sign-out, not only on load: on load the signed-in UI has
+// already hidden the container, and Google sizes the button when it draws it.
+function renderGoogleButton() {
+  if (!window.google || !authHandlers) return;
+  google.accounts.id.renderButton(authHandlers.buttonEl, {
+    type: "standard",
+    theme: "filled_black",
+    size: "large",
+    shape: "pill",
+    text: "signin_with",
+    width: "240",
+  });
+}
+
+function initGoogleAuth({onSignIn, onSignOut, buttonEl}) {
+  authHandlers = {onSignIn, onSignOut, buttonEl};
+
+  // Restore before the Google library loads. A reload inside the hour must not
+  // blank the page while a script downloads from another origin.
+  const user = currentUser();
+  if (user) onSignIn(user);
+  else onSignOut();
+
+  if (window.google) googleLibraryLoaded();
+}
+
+// The Google <script> tag carries onload="googleLibraryLoaded()" and is the last
+// element in <body>, after the page's own script - so the handlers are always in
+// place by the time the library lands, whatever order async loading picks.
+function googleLibraryLoaded() {
+  if (!authHandlers) return;
+
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredential,
+    auto_select: true,
+  });
+  renderGoogleButton();
+
+  // One Tap only when there is nothing to restore, or a reader who is already
+  // signed in gets prompted for the account they are currently using.
+  if (!getToken()) google.accounts.id.prompt();
+}
+
+// accounts.google.com is blocked by some content blockers and networks. Without
+// this the page sits there with a dead button and no explanation at all.
+function googleLibraryFailed() {
+  if (!authHandlers) return;
+  authHandlers.buttonEl.textContent =
+    "Google sign-in could not load. Check your connection, or a content blocker.";
+}
+
+// A 401 means the backend rejected the token - expired, or revoked elsewhere.
+// Say that plainly and put the Google button back; a raw error reads as a broken
+// app, and leaving the signed-in UI up means every retry fails the same way.
+function handleAuthExpired(errorEl) {
+  signOut();
+  errorEl.textContent = "Your sign-in expired. Sign in with Google again to continue.";
+}

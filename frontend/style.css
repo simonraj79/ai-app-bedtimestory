@@ -7,6 +7,14 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+/* The signed-in/signed-out swap is driven entirely by the `hidden` attribute,
+   and the UA stylesheet's [hidden] rule loses to any author `display`. Making
+   it explicit means adding a layout rule later cannot quietly un-hide someone
+   else's email. */
+[hidden] {
+    display: none !important;
+}
+
 html {
     -webkit-text-size-adjust: 100%;   /* stop iOS resizing text in landscape */
 }
@@ -250,6 +258,65 @@ button:disabled {
     font-weight: 600;
 }
 
+/* --- Sign-in bar ---------------------------------------------------------- */
+
+.authbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 0.8rem;
+    margin: 1rem 0 0.5rem;
+    min-height: var(--tap);
+}
+
+.auth-hint,
+.auth-who {
+    font-size: 0.9rem;
+    color: #8b93a7;
+}
+
+body.bedtime .auth-hint,
+body.bedtime .auth-who {
+    color: #8f9bb8;
+}
+
+/* Two classes, no element: specificity (0,2,0). Deliberately more than it needs
+   to beat the base `button` rule (0,0,1) today, because the rule this file used
+   to carry - `body.bedtime button` - is (0,1,2), and a bare `.signout` (0,1,0)
+   would lose to it wherever it sat in the file. That is exactly how every chip
+   and every length button ended up painted gold. (0,2,0) wins on class count
+   either way, so reintroducing that rule cannot break this one. */
+.authbar .signout {
+    min-height: var(--tap);
+    padding: 0.45rem 0.9rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: normal;
+    color: #8b93a7;
+    background: transparent;
+    border: 1px solid #262a35;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.authbar .signout:hover,
+.authbar .signout:active {
+    color: #e6e8ee;
+    border-color: #4f7cf7;
+}
+
+body.bedtime .authbar .signout {
+    color: #8f9bb8;
+    border-color: #2a3450;
+}
+
+body.bedtime .authbar .signout:hover,
+body.bedtime .authbar .signout:active {
+    color: #131a2c;
+    background: #e5c98a;
+    border-color: #e5c98a;
+}
+
 /* --- Output --------------------------------------------------------------- */
 
 #answer {
@@ -388,6 +455,114 @@ body.bedtime #history .q {
 
 #history .empty {
     padding: 0.9rem 0;
+}
+
+/* --- Admin usage ---------------------------------------------------------- */
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: 0.8rem;
+    margin-top: 1.5rem;
+}
+
+.stat {
+    padding: 1rem;
+    background: #1c1f28;
+    border: 1px solid #262a35;
+    border-radius: 12px;
+}
+
+.stat .n {
+    display: block;
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+
+.stat .k {
+    display: block;
+    font-size: 0.85rem;
+    color: #8b93a7;
+}
+
+/* Four columns do not fit a phone. Let the table scroll on its own rather than
+   dragging the whole page sideways. */
+.table-wrap {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+th,
+td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.6rem 0.5rem;
+    border-bottom: 1px solid #262a35;
+}
+
+th {
+    color: #8b93a7;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.num {
+    text-align: right;
+}
+
+.who {
+    display: block;
+    color: #e6e8ee;
+}
+
+.mail,
+.joined {
+    display: block;
+    font-size: 0.8rem;
+    color: #6a7186;
+}
+
+.when {
+    color: #8b93a7;
+    white-space: nowrap;
+}
+
+#recent {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+#recent li {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid #262a35;
+}
+
+#recent .kind {
+    display: inline-block;
+    margin-right: 0.5rem;
+    padding: 0.05rem 0.5rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #8b93a7;
+    border: 1px solid #262a35;
+    border-radius: 999px;
+}
+
+#recent .detail {
+    color: #e6e8ee;
+}
+
+#recent .meta {
+    display: block;
+    font-size: 0.8rem;
+    color: #6a7186;
 }
 
 /* --- Narrow screens ------------------------------------------------------- */

@@ -11,3 +11,11 @@ uvicorn[standard]==0.52.*
 httpx==0.28.*
 psycopg[binary]==3.3.*
 python-dotenv==1.2.*
+# Verifies the Google ID token each signed-in request carries.
+#
+# The [requests] extra is not optional: google.auth.transport.requests imports
+# the requests package, and bare google-auth does not install it, so the backend
+# would fail at import. That is why this small backend ends up with two HTTP
+# clients - httpx is ours, requests belongs to google-auth's transport. Do not
+# "tidy" it into httpx; there is no supported adapter for that.
+google-auth[requests]==2.56.*

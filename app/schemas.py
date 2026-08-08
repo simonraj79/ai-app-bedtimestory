@@ -40,3 +40,42 @@ class Story(BaseModel):
 class StoryResponse(BaseModel):
     story: str
     history: list[Story]
+
+
+# --- Sign-in -----------------------------------------------------------------
+
+class CurrentUser(BaseModel):
+    id: int
+    email: str
+    name: str
+
+
+# --- Admin -------------------------------------------------------------------
+
+class UsageTotals(BaseModel):
+    users: int
+    stories: int
+    questions: int
+
+
+class UsageUser(BaseModel):
+    id: int
+    email: str
+    name: str
+    created_at: str
+    last_seen_at: str
+    stories: int
+    questions: int
+
+
+class UsageAction(BaseModel):
+    kind: str  # "story" or "question"
+    email: str
+    detail: str
+    created_at: str
+
+
+class UsageResponse(BaseModel):
+    totals: UsageTotals
+    users: list[UsageUser]
+    recent: list[UsageAction]

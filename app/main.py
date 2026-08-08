@@ -6,17 +6,19 @@ import os
 
 import httpx
 import psycopg
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import get_conn
 from app.schemas import (
-    AskRequest, AskResponse, Interaction,
-    Story, StoryRequest, StoryResponse,
+    AskRequest, AskResponse, CurrentUser, Interaction,
+    Story, StoryRequest, StoryResponse, UsageResponse,
 )
 from app.services.gemini_service import (
     GEMINI_API_KEY, GEMINI_BASE_URL, call_gemini, generate_story,
 )
+from app.services.admin_service import fetch_usage
+from app.services.auth_service import admin_user, current_user
 from app.services.chat_service import save_interaction, fetch_recent_history
 from app.services.story_service import save_story, fetch_recent_stories
 
@@ -30,7 +32,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    # Authorization carries the Google ID token. Leave it out and the browser's
+    # preflight is refused before the real request is ever sent - a failure that
+    # shows up as "Failed to fetch" with nothing in the backend logs.
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -42,24 +47,24 @@ def root():
 # --- App 1: Chat -------------------------------------------------------------
 
 @app.post("/ask", response_model=AskResponse)
-def ask(payload: AskRequest):
+def ask(payload: AskRequest, user: CurrentUser = Depends(current_user)):
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Please enter a question.")
     answer = call_gemini(question)
-    save_interaction(question, answer)
-    return AskResponse(answer=answer, history=fetch_recent_history())
+    save_interaction(question, answer, user.id)
+    return AskResponse(answer=answer, history=fetch_recent_history(user.id))
 
 
 @app.get("/history", response_model=list[Interaction])
-def history():
-    return fetch_recent_history()
+def history(user: CurrentUser = Depends(current_user)):
+    return fetch_recent_history(user.id)
 
 
 # --- App 2: Bedtime Story ----------------------------------------------------
 
 @app.post("/story", response_model=StoryResponse)
-def story(payload: StoryRequest):
+def story(payload: StoryRequest, user: CurrentUser = Depends(current_user)):
     child_name = payload.child_name.strip()
     theme = payload.theme.strip()
     if not child_name:
@@ -67,13 +72,26 @@ def story(payload: StoryRequest):
     if not theme:
         raise HTTPException(status_code=400, detail="Please say what the story is about.")
     text = generate_story(child_name, theme, payload.length)
-    save_story(child_name, theme, text)
-    return StoryResponse(story=text, history=fetch_recent_stories())
+    save_story(child_name, theme, text, user.id)
+    return StoryResponse(story=text, history=fetch_recent_stories(user.id))
 
 
 @app.get("/stories", response_model=list[Story])
-def stories():
-    return fetch_recent_stories()
+def stories(user: CurrentUser = Depends(current_user)):
+    return fetch_recent_stories(user.id)
+
+
+# --- Admin -------------------------------------------------------------------
+
+# The dependency is a gate, not an argument - the route needs the check to run
+# but has no use for the user it returns.
+@app.get(
+    "/admin/usage",
+    response_model=UsageResponse,
+    dependencies=[Depends(admin_user)],
+)
+def admin_usage():
+    return fetch_usage()
 
 
 # --- Shared ------------------------------------------------------------------

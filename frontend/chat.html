@@ -14,8 +14,17 @@
     <a class="back" href="index.html">&larr; All apps</a>
     <h1>💬 Chat</h1>
 
+    <div class="authbar">
+        <div id="g-signin"></div>
+        <span id="auth-hint" class="auth-hint">Sign in with Google to ask a question.</span>
+        <span id="auth-who" class="auth-who" hidden></span>
+        <button type="button" id="signout" class="signout" hidden>Sign out</button>
+    </div>
+
     <textarea id="question" rows="3" placeholder="Ask a question…" enterkeyhint="send"></textarea>
-    <button id="ask-btn" class="primary">Ask</button>
+    <!-- Starts disabled: the page ships in the signed-out state, and the form
+         stays visible because a hidden form reads as a broken page. -->
+    <button id="ask-btn" class="primary" disabled>Ask</button>
 
     <div id="answer" aria-live="polite"></div>
     <div id="error" role="alert"></div>
@@ -41,9 +50,14 @@
         </details></li>`).join("");
     }
 
+    // /history is per-user and authenticated, so there is nothing to fetch until
+    // someone is signed in - and asking anyway would just be a 401.
     async function loadHistory() {
+      const headers = authHeaders();
+      if (!headers) return;
       try {
-        const r = await fetch(`${BACKEND_URL}/history`);
+        const r = await fetch(`${BACKEND_URL}/history`, {headers});
+        if (r.status === 401) return handleAuthExpired(document.getElementById("error"));
         if (r.ok) renderHistory(await r.json());
       } catch (e) {
         document.getElementById("error").textContent =
@@ -56,15 +70,25 @@
       const errEl = document.getElementById("error");
       const ansEl = document.getElementById("answer");
       errEl.textContent = "";
+
+      const headers = authHeaders();
+      if (!headers) return handleAuthExpired(errEl);
+
       ansEl.textContent = "Thinking…";
       btn.disabled = true;
       try {
         const r = await fetch(`${BACKEND_URL}/ask`, {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers,
           body: JSON.stringify({question: document.getElementById("question").value}),
         });
+        if (r.status === 401) {
+          ansEl.textContent = "";
+          return handleAuthExpired(errEl);
+        }
         const data = await r.json();
+        // 429 and 502 arrive as {"detail": "..."} already written for a person;
+        // pass them through rather than inventing our own wording.
         if (!r.ok) throw new Error(data.detail || "Request failed");
         ansEl.textContent = data.answer;
         renderHistory(data.history);
@@ -74,11 +98,44 @@
           ? `Cannot reach the backend at ${BACKEND_URL}. Check it is running and that this origin is allowed by CORS.`
           : e.message;
       } finally {
-        btn.disabled = false;
+        // Not plain `false`: a 401 above signed us out, and re-enabling the
+        // button would offer a request that cannot succeed.
+        btn.disabled = !getToken();
       }
     });
 
-    loadHistory();
+    const hintEl = document.getElementById("auth-hint");
+    const whoEl = document.getElementById("auth-who");
+    const signoutBtn = document.getElementById("signout");
+    const buttonEl = document.getElementById("g-signin");
+
+    initGoogleAuth({
+      buttonEl,
+      onSignIn: user => {
+        whoEl.textContent = `Signed in as ${user.name || user.email}`;
+        whoEl.hidden = false;
+        signoutBtn.hidden = false;
+        hintEl.hidden = true;
+        buttonEl.hidden = true;
+        document.getElementById("ask-btn").disabled = false;
+        loadHistory();
+      },
+      onSignOut: () => {
+        whoEl.hidden = true;
+        signoutBtn.hidden = true;
+        hintEl.hidden = false;
+        buttonEl.hidden = false;
+        document.getElementById("ask-btn").disabled = true;
+        // The answer and the history belong to one person, so they go when
+        // that person does - the next signer-in must not read them.
+        document.getElementById("answer").textContent = "";
+        renderHistory([]);
+      },
+    });
+    signoutBtn.addEventListener("click", signOut);
     </script>
+
+    <script src="https://accounts.google.com/gsi/client" async defer
+            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
 </body>
 </html>

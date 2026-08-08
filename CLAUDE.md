@@ -5,20 +5,28 @@ built to, the insights worth keeping, and the gotchas that already cost time.
 
 ## What this is
 
-Two **single-turn** AI apps behind a hub page. A FastAPI **backend** (Render) and
-a separate static **frontend** (Vercel), talking cross-origin.
+Two **single-turn** AI apps behind a hub page, plus an owner-only usage page. A
+FastAPI **backend** (Render) and a separate static **frontend** (Vercel), talking
+cross-origin. **Google sign-in is required to generate anything.**
 
-| # | App | Page | Endpoint | Table |
-|---|---|---|---|---|
-| 1 | 💬 Chat | `chat.html` | `POST /ask` | `interactions` |
-| 2 | 🌙 Bedtime Story | `story.html` | `POST /story` | `stories` |
+| # | App | Page | Endpoints | Table | Who |
+|---|---|---|---|---|---|
+| 1 | 💬 Chat | `chat.html` | `POST /ask` · `GET /history` | `interactions` | any signed-in user |
+| 2 | 🌙 Bedtime Story | `story.html` | `POST /story` · `GET /stories` | `stories` | any signed-in user |
+| — | 📊 Usage | `admin.html` | `GET /admin/usage` | reads all three | `ADMIN_EMAIL` only |
+
+`GET /` and `GET /healthz` are the only open routes. Everything else needs
+`Authorization: Bearer <google-id-token>`, and history is **per user**.
 
 ```
-Browser ──(static)──► Vercel: frontend/
-   │
-   └──(fetch, CORS)──► Render: FastAPI ──httpx──► Gemini API
-                          │
-                          └──psycopg──► Postgres (one DB, two tables)
+                     ┌──(GIS)──► Google: sign in, get an ID token (JWT)
+                     │
+Browser ──(static)──►┤ Vercel: frontend/
+   │                 │
+   └──(fetch, CORS, Authorization: Bearer <jwt>)──► Render: FastAPI
+                          ├──httpx───────► Gemini API
+                          ├──google-auth─► Google certs (verify the signature)
+                          └──psycopg────► Postgres (one DB, three tables)
 ```
 
 **This folder supersedes `D:\SINGLE TURN CHAT`.** Everything lives here.
@@ -29,20 +37,25 @@ Browser ──(static)──► Vercel: frontend/
 app/                       the backend - API only, no HTML
   main.py                  CORS + routes + /healthz
   database.py              DATABASE_URL + get_conn()
-  schemas.py               chat models, then story models
+  schemas.py               chat models, story models, CurrentUser, usage models
   services/
     gemini_service.py      the ONLY file that knows the model provider
+    auth_service.py        the ONLY file that knows the identity provider
     chat_service.py        save_interaction / fetch_recent_history
     story_service.py       save_story / fetch_recent_stories
+    admin_service.py       fetch_usage - totals, per-person counts, recent feed
 frontend/                  the frontend - deployed to Vercel, static only
   index.html               hub
   chat.html                app 1
   story.html               app 2
-  config.js                BACKEND_URL - the one line to change per environment
+  admin.html               usage - NOT linked from the hub, owner only
+  config.js                BACKEND_URL + escapeHtml + the whole sign-in client
   style.css                body.bedtime overrides the palette
 sql/
   001_create_interactions.sql
   002_create_stories.sql
+  003_create_users.sql     one row per Google account, keyed on google_sub
+  004_add_user_id.sql      nullable user_id on both tables + (user_id, id DESC)
 scripts/smoke_gemini.py    exercises both apps, no database involved
 render.yaml                Render Blueprint (web service + free Postgres)
 Procfile                   Render start command
@@ -67,16 +80,30 @@ vercel.json                deploy frontend/ as static
 | **DB expires** | **2026-09-07** — free tier, 30 days from creation |
 | Vercel team | `team_6Mc9jwQee8nmnfyfV8IJPAlx` (`simon-rajs-projects`) |
 | Vercel project | `prj_IRlDJCZYjQNittWSAbm8cKJWle2O` (`ai-app-bedtimestory`) |
+| Google Cloud project | `dsai-mod-2-group-project` · number `722888382160` |
+| OAuth client | Web application, in that project — **console-only**, see the gotcha |
+| `ADMIN_EMAIL` | `simoraj@gmail.com` |
 | Local Postgres | Docker container `ai-apps-pg`, database `ai_apps` |
 
-**Vercel auto-deploy is NOT wired** (re-verified 8 Aug 2026 — `link: null`, and
-the only deployment is a direct upload with no `githubCommitSha`). The frontend
-was uploaded via the API because Vercel's GitHub App cannot see the private repo,
-so **`git push` redeploys Render but not Vercel**. See the gotcha below for the
-precise diagnosis and the two API checks that confirm it.
+⚠️ **The OAuth client is owned by `simoraj@gmail.com`, which is *not* the Chrome
+default profile (`inspiring.resilience@gmail.com`).** Creating the client under
+one account and then signing into the app with the other is an easy mistake and a
+confusing one: the sign-in succeeds, the app works, and `/admin/usage` returns
+`403` because the signed-in email is not `ADMIN_EMAIL`. Check which profile the
+browser picked before debugging anything.
 
-Until it is linked, redeploy the frontend with the upload script — it takes
-seconds and is the only way a frontend change reaches production.
+✅ **Vercel auto-deploy IS wired** — re-verified 8 Aug 2026 against the API, not
+the dashboard:
+
+```
+link:  github -> simonraj79/ai-app-bedtimestory
+latest deployment: READY  sha=c30bfce3  "Trigger first Vercel build ..."
+```
+
+A deployment carrying a `githubCommitSha` is the proof; the two below it have
+`sha=NONE`, which is what the old manual uploads look like. **`git push` now
+deploys both halves.** The gotcha below is kept because the `repo_not_found`
+diagnosis is reusable, not because the link is still missing.
 
 ---
 
@@ -95,6 +122,8 @@ produced an error.
 | `cmd \| grep \| sed` printed nothing, so "no secrets" | The pipeline returned **sed's** exit code, so `\|\| echo PASS` was unreachable | `grep -c` and compare the number |
 | Vercel "linked to GitHub" | `link: null`, and the only deployment was a manual upload | Listing **all** projects — a sibling *was* linked, which located the real cause |
 | Postgres `SSL connection closed unexpectedly` | Nothing wrong with SSL; the IP was not allow-listed | Reading `ipAllowList` from the API |
+| "CORS keeps the history private" | `curl /stories` with no token and no `Origin` returned **200 and 3,099 bytes** of every child's name, theme and full story | One `curl` from a terminal, which ignores CORS entirely |
+| "No OAuth client exists — the sweep found nothing" | Consumer OAuth clients are **console-only**; the CLI cannot see them at all | Opening `console.cloud.google.com/apis/credentials` |
 
 The corrective in each case was the same: **query independent state.**
 `curl /openapi.json` for what the server really serves. A row count for what was
@@ -143,6 +172,85 @@ CORS stops **other people's websites** using your API through their visitors'
 browsers; it does not stop a determined caller. Treating it as security is a
 common and expensive misreading.
 
+## …and the misreading had already leaked every story
+
+Not hypothetical. Before sign-in existed, from a terminal, no token, no `Origin`
+header:
+
+```bash
+curl -s https://ai-app-bedtimestory.onrender.com/stories | wc -c   # 200, 3099
+```
+
+3,099 bytes: every child's name, every theme, every full story, to anyone who
+guessed the route. The CORS config was correct the whole time and was never
+capable of stopping it. **This is what "CORS is not authentication" costs when
+it is left as a note rather than acted on.**
+
+Per-user history closed it. `/stories` and `/history` now take the caller's
+`user_id` from the verified token and query `WHERE user_id = %s`, so there is no
+"all rows" read path left in the codebase to be reached.
+
+## Sign-in is an ID token, not a session — the two origins decided it
+
+Google Identity Services hands the **browser** a signed JWT. The browser sends it
+as `Authorization: Bearer <jwt>`; `auth_service.py` verifies the signature
+against Google's public keys. That is the whole mechanism. **No client secret, no
+redirect URI, no callback route, no cookie, no session store.**
+
+This was not the default choice — it was forced by the split deploy:
+
+| Approach | Why not here |
+|---|---|
+| Session cookie | The frontend is `vercel.app` and the backend is `onrender.com` — **different registrable domains, both on the Public Suffix List**, so no cookie can be scoped to cover both. It would be a third-party cookie, which Safari blocks outright. The app would work in Chrome and silently fail on the exact device a parent uses at bedtime. |
+| Authorization-code flow | Needs a **client secret** and a server-side callback. The secret cannot live in `frontend/` (every visitor reads it), and adding a callback route means state, redirect-URI registration and a session to put the result in — all to end up knowing the same thing the ID token already states. |
+
+So the property "nothing secret may ever live in `frontend/`" survives sign-in
+intact: `GOOGLE_CLIENT_ID` ships in `config.js` and is **public by design** — it
+names the app to Google and rides in every sign-in request. It is not a
+credential, and there is no secret counterpart in this flow.
+
+The trade is stated in the gotchas: verification costs one outbound HTTPS call
+per authenticated request, because google-auth does not cache Google's certs.
+
+## Signed out, the page still renders — the button is just disabled
+
+Sign-in is **required to generate**. It is not required to see the page. Every
+page ships in the signed-out state with the submit button `disabled` and a hint
+next to the Google button (*"Sign in with Google to hear a story."*).
+
+Hiding the form instead would have been less code. It also reads as a broken
+page — a parent who opens the app and finds nothing there does not conclude
+"I must be signed out", they conclude the app is down.
+
+The frontend never decides *who* you are, only *whether* to bother asking.
+`decodeJwtPayload` in `config.js` reads the JWT payload without verifying
+anything, and is for **display only** — greeting you by name. Branch on it for
+permission and the admin page becomes a text field. The only authority on
+identity is the backend's signature check.
+
+## What sign-in did to the data model
+
+Three decisions, each of which would be expensive to reverse:
+
+- **`users` is keyed on `google_sub`, not email.** The `sub` claim is stable for
+  the life of the Google account; an email address can be changed by its owner.
+  Keyed on email, a rename forks one person into two rows and splits their
+  history between them — silently, and unrecoverably without manual merging.
+- **`user_id` is NULLABLE.** The 3 stories and 3 interactions already in
+  production predate sign-in and have no owner, and never will. `NOT NULL` would
+  have required inventing one, which is a lie written into the data. `NULL` says
+  *"predates sign-in"*, and `admin_service.py` labels those rows
+  `(before sign-in)` rather than dropping them, so the totals and the feed agree.
+- **No events or analytics table.** `stories` and `interactions` already record
+  what people do, with timestamps; `users.last_seen_at` is maintained by the same
+  upsert that authenticates, so return visits are covered for free. A third table
+  would duplicate rows that already exist in order to count them. See *Reading
+  the tracking data* for the queries this makes possible.
+
+`admin.html` is deliberately **not linked from the hub**. That is tidiness, not
+security — the backend refuses `/admin/usage` to everyone but `ADMIN_EMAIL`
+regardless of who finds the URL.
+
 ## The split deploy has a circular dependency
 
 `frontend/config.js` needs the Render URL; the backend's `FRONTEND_ORIGINS` needs
@@ -190,8 +298,15 @@ silently lags the backend.
 `ask_gemini(system_prompt, message)` owning the HTTP call. Moving from Ollama to
 Gemini touched exactly one file. Let no Gemini-shaped detail leak outward.
 
+`auth_service.py` is the same idea for identity: `main.py` knows only
+`Depends(current_user)` and `Depends(admin_user)`, and nothing Google-shaped —
+`id_token`, `TransportError`, `google_sub` — appears anywhere else in the
+backend.
+
 **Adding a third app**: a system prompt constant, a `*_service.py`, schemas, a
-frontend page, a hub card, a `sql/00N_*.sql`, routes. Nothing else.
+frontend page, a hub card, a `sql/00N_*.sql`, routes. Nothing else. The routes
+take `user: CurrentUser = Depends(current_user)` and the table gets a nullable
+`user_id`, or the new app is the one that leaks.
 
 ## The frontend picks its own backend
 
@@ -231,8 +346,22 @@ they need their own pass, because image models do not inherit it.
 - `render.yaml`: `GEMINI_API_KEY` uses **`sync: false`** ("exists, value lives in
   the dashboard"); `DATABASE_URL` uses **`fromDatabase`** so Render injects the
   managed connection string and it cannot drift.
-- `frontend/config.js` holds only a public URL — never a key. Anything in
-  `frontend/` is readable by every visitor.
+- `frontend/config.js` holds only a public URL and the public OAuth client ID —
+  never a key. Anything in `frontend/` is readable by every visitor.
+
+`GOOGLE_CLIENT_ID` and `ADMIN_EMAIL` are also `sync: false`, but **neither is a
+secret in the way `GEMINI_API_KEY` is**, and it matters that nobody treats them
+as one:
+
+| Variable | What it actually is |
+|---|---|
+| `GEMINI_API_KEY` | A **credential**. Leaked, it bills and is abused. Rotate on exposure. |
+| `GOOGLE_CLIENT_ID` | **Public by design.** It ships in `frontend/config.js` and rides in every sign-in request. Its job is to be the value the token's `aud` claim is checked against — a *wrong* one silently rejects every sign-in, which is the real failure mode. Nothing to protect. |
+| `ADMIN_EMAIL` | Merely **private**. A personal address kept out of a git repo, not a credential. Knowing it grants nothing: you still need a Google token proving you own it. |
+
+`sync: false` on the last two means *"set this per environment"*, not
+*"protect this"*. Both are read with bracket access, so a missing one is a
+`KeyError` at startup rather than a deployment where every sign-in 401s.
 
 ## Three kinds of secret, three files
 
@@ -244,7 +373,10 @@ they need their own pass, because image models do not inherit it.
 
 The control-plane keys create, delete and bill resources across whole accounts.
 `RENDER_API_KEY` landed in `.env` once, was exposed, and had to be rotated.
-**Deploy tokens are short-lived by design — revoke both once deployment is done.**
+**Deploy tokens are short-lived by design — rotate or revoke both once deployment
+is done.** ✅ Both rotated 8 Aug 2026. Once each host deploys from Git, no code
+reads these at all: `VERCEL_TOKEN`'s only consumer was `deploy_frontend.py`,
+deleted at milestone 13. A token nothing reads is pure liability — revoke it.
 
 ---
 
@@ -459,6 +591,135 @@ Because `model_name` is stored per row, a model switch is visible in the data:
 SELECT model_name, count(*) FROM stories GROUP BY model_name;
 ```
 
+## `google-auth` alone does not install what it imports
+
+`google.auth.transport.requests` imports the **`requests`** package. This project
+has never had it — it uses httpx — and bare `google-auth` does not pull it in.
+The failure is at **import**, so the backend does not start at all: not a 500 on
+a sign-in attempt, a process that never comes up.
+
+The pin must carry the extra:
+
+```
+google-auth[requests]==2.56.*
+```
+
+Consequence, written down so nobody "tidies" it away: **this small backend now
+runs two HTTP clients on purpose.** httpx is ours; `requests` belongs to
+google-auth's transport. There is no supported httpx transport for
+`verify_oauth2_token`.
+
+## `TransportError` is not a `ValueError` — `except ValueError` is a hole
+
+`id_token.verify_oauth2_token` raises `ValueError` for a token that is expired,
+forged, or addressed to a different `aud`. It raises
+**`google.auth.exceptions.TransportError`** when it cannot *fetch* Google's
+signing certificates. The MRO is `TransportError → GoogleAuthError → Exception`:
+it never touches `ValueError`, so a single `except ValueError` lets it straight
+through as an unhandled **500**.
+
+The version that looks like a fix is worse. Widen the except to cover both and a
+user holding a perfectly valid token is told *"your sign-in has expired"* — signs
+in again, gets the same message, forever, while nothing is wrong with their
+sign-in at all.
+
+**This is the same bug class as "A quota error is not an outage" above:** two
+unrelated failures collapsed into one answer, which is then wrong for one of
+them. Now caught separately — `401` for a bad token, `502` *"Could not reach
+Google to verify your sign-in."* for a transport failure.
+
+Proven, not assumed: constructing a transport that raises `TransportError` and
+asserting on **which handler caught it**. A check that cannot fail is not a check.
+
+## Verifying a token costs one outbound call to Google, every request
+
+`verify_oauth2_token` fetches Google's certs on each call and google-auth does
+**not** cache them. Against a 4–9s Gemini call it is noise. `/history` and
+`/stories` are pure database reads, and they are measurably slower than before.
+
+Documented, not fixed: caching the certs means owning their rotation, and that is
+a real bug waiting when they roll.
+
+## `use_fedcm_for_prompt` is deprecated and explicitly ignored by GIS
+
+It was in the original spec for this work and was dropped after checking Google's
+live reference. The current opt-in flag is **`use_fedcm_for_button`**.
+
+Also under FedCM: `isDisplayMoment()`, `isDisplayed()`, `isNotDisplayed()` and
+`getNotDisplayedReason()` are **unsupported**, and `getSkippedReason()` is
+degraded. Do not add One Tap moment-listener logic without rechecking these
+first — the handlers will simply never fire.
+
+The general lesson, and the reason this is here rather than in a commit message:
+**the GIS API surface is moving.** Check the live reference; do not write it from
+memory.
+
+## Consumer OAuth client IDs cannot be listed from a terminal — at all
+
+There is **no API and no gcloud command** that enumerates consumer OAuth 2.0
+client IDs. They are console-only. Two commands look like they should work and
+answer a different question:
+
+| Command | What it actually covers | Result here |
+|---|---|---|
+| `gcloud iam oauth-clients list` | **Workforce Identity Federation** clients — a different product | `[]` |
+| `gcloud alpha iap oauth-brands list` | **IAP** only, and deprecated (shutdown announced 19 Mar 2026) | not applicable |
+
+So *"does an OAuth client already exist for this project?"* **cannot be settled
+from a terminal.** Only <https://console.cloud.google.com/apis/credentials>
+answers it.
+
+Worth recording because a full disk-and-API sweep came back clean and looked
+authoritative. It was answering a question nobody asked.
+
+## Authorized JavaScript **origins**, not redirect URIs
+
+The GIS ID-token flow never redirects, so the client has **no redirect URI at
+all** — the field to fill in is *Authorized JavaScript origins*. Getting this
+backwards produces a client that is configured, looks right, and fails at runtime
+with `origin_mismatch`.
+
+- **No trailing slash, no path.** `https://ai-app-bedtimestory.vercel.app` — not
+  `.../` and not `.../story.html`.
+- Local development needs its own entry: `http://localhost:5500`.
+- **Changes take ~5 minutes to propagate.** A brand-new client that fails
+  immediately is usually just not live yet. Wait before changing anything.
+
+The contrast is worth holding onto: a server-side authorization-code flow is the
+exact opposite shape — redirect URIs, and no JavaScript origins.
+
+## The consent screen must be PUBLISHED, not left in Testing
+
+Testing mode caps the app at **100 test users**, each of which has to be added by
+hand. With only the non-sensitive scopes this app uses — `openid`, `email`,
+`profile` — publishing costs nothing:
+
+- no Google verification review
+- no "unverified app" warning screen
+- no user cap
+
+There is therefore **no reason to stay in Testing**. Leaving it there is the
+default, not a decision, and it fails for the 101st person with an error that
+does not mention the cap.
+
+## A stray gcloud `billing/quota_project` poisons calls for a different account
+
+On this machine `billing/quota_project` was set to `ve-grp-1-444-project4-3fpi`
+(an unrelated NTU project). Every call made as `--account=simoraj@gmail.com`
+failed with **`USER_PROJECT_DENIED`** — the account is fine, the project it is
+being billed against is not one that account may use.
+
+`CLOUDSDK_BILLING_QUOTA_PROJECT=""` **does not clear it.** The working route was
+to bypass gcloud's config entirely and call REST directly:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-access-token --account=simoraj@gmail.com)" ...
+```
+
+A gcloud config is machine-wide state that outlives whatever set it. When a
+command fails for one account and works for another, check the config before the
+permissions.
+
 ## Render's Postgres refuses external connections — and the error lies
 
 A fresh Render database has `ipAllowList: None`. Connecting from outside fails
@@ -490,6 +751,10 @@ curl -X PATCH -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: appli
 Migrations run through `psycopg` directly — there is no `psql` on this machine.
 
 ## Vercel cannot see a private GitHub repo by default
+
+✅ **Resolved 8 Aug 2026 — the repo is linked and push-to-deploy works on both
+halves.** Kept because the diagnosis is reusable and `repo_not_found` will lie
+the same way next time.
 
 `POST /v11/projects` with `gitRepository` fails:
 
@@ -545,8 +810,38 @@ A deployment with no `meta.githubCommitSha` came from a direct upload, not Git.
 even though the project and `vercel.json` say `frontend` — those apply to *Git*
 builds, where the repo root is the deployment root.
 
-It works and goes live in seconds, but **loses auto-deploy**. Re-run
-`scripts/`-style upload after any frontend change until the repo is linked.
+It works and goes live in seconds, but **loses auto-deploy** — every frontend
+change needs another manual upload. That was `scripts/deploy_frontend.py`, which
+was deleted once the link went live. If you ever need it again, it is in the
+history: `git show c0fc17d:scripts/deploy_frontend.py`.
+
+### ⚠️ Linking does not deploy what is already pushed
+
+Linking the repo subscribes Vercel to **future** push events. It does not build
+the current commit. A commit pushed *before* the link existed never fired a
+webhook, so the site keeps serving the old build with no error anywhere — the
+dashboard says "Connected", the repo says up to date, and the two are describing
+different things.
+
+Hit exactly this on 8 Aug 2026: `c0fc17d` moved `escapeHtml` into `config.js`,
+was pushed minutes before linking, and simply never deployed. Fix is one push —
+an empty commit is enough, and it doubles as proof the webhook works:
+
+```bash
+git commit --allow-empty -m "Trigger first Vercel build" && git push
+```
+
+**Assert on the deployed bytes, not the dashboard badge:**
+
+```bash
+curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep escapeHtml
+```
+
+The old build was internally consistent — old pages carried their own inline
+`escapeHtml` — so nothing looked broken. A *partial* deploy would have been worse:
+new HTML plus old `config.js` is a `ReferenceError` that kills history rendering.
+Vercel deploys atomically, so that window does not exist, but it is the failure
+mode to reason about whenever a page starts depending on a shared script.
 
 ## Render API notes
 
@@ -633,6 +928,52 @@ all error paths still pass.
 
 ---
 
+# Reading the tracking data
+
+`/admin/usage` renders the headline numbers. These are the queries behind them,
+for when you want the shape rather than the summary. Run them against the local
+container, or against production through a temporarily opened `/32`.
+
+```sql
+-- 1. Signups over time. One row per person, ever.
+SELECT date(created_at) AS day, count(*) AS signups
+FROM users GROUP BY day ORDER BY day;
+
+-- 2. What each person has actually made.
+SELECT u.email,
+       (SELECT count(*) FROM stories      s WHERE s.user_id = u.id) AS stories,
+       (SELECT count(*) FROM interactions i WHERE i.user_id = u.id) AS questions,
+       u.created_at, u.last_seen_at
+FROM users u ORDER BY stories DESC, questions DESC;
+
+-- 3. Most active in the last 7 days - who is actually still using it.
+SELECT u.email, count(*) AS stories
+FROM stories s JOIN users u ON u.id = s.user_id
+WHERE s.created_at > NOW() - INTERVAL '7 days'
+GROUP BY u.email ORDER BY stories DESC;
+
+-- 4. Daily actives across BOTH apps. Distinct people, not rows: three stories
+--    in one night is one active person, not three.
+SELECT day, count(DISTINCT user_id) AS people FROM (
+    SELECT date(created_at) AS day, user_id FROM stories
+    UNION ALL
+    SELECT date(created_at),        user_id FROM interactions
+) a WHERE user_id IS NOT NULL GROUP BY day ORDER BY day;
+
+-- 5. Rows that predate sign-in. These never get an owner - the number should
+--    stay frozen forever. If it grows, a route is writing without a user_id.
+SELECT (SELECT count(*) FROM stories      WHERE user_id IS NULL) AS stories,
+       (SELECT count(*) FROM interactions WHERE user_id IS NULL) AS questions;
+```
+
+Two caveats to read them honestly:
+
+- **`last_seen_at` means "last authenticated request", not "last signed in".**
+  The upsert in `current_user` runs on every call, so simply opening a page with
+  a live token bumps it.
+- **A row is created on first sign-in, not on first use.** Query 1 counts people
+  who arrived; query 2's zeroes are the ones who arrived and did nothing.
+
 # Verifying
 
 ```bash
@@ -649,10 +990,28 @@ curl -i -X OPTIONS http://localhost:8000/ask -H "Origin: http://localhost:5500" 
 curl -i -X OPTIONS http://localhost:8000/ask -H "Origin: https://evil.example.com" \
   -H "Access-Control-Request-Method: POST"   # 400, no allow-origin
 
+# the preflight must now ALLOW the Authorization header, or the browser never
+# sends the real request - "Failed to fetch", nothing in the backend log
+curl -i -X OPTIONS http://localhost:8000/story -H "Origin: http://localhost:5500" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: Authorization"   # 200, Authorization listed
+
+# auth - every one of these must be 401 with no token
+curl -i http://localhost:8000/history                  # 401
+curl -i http://localhost:8000/stories                  # 401
+curl -i http://localhost:8000/admin/usage              # 401
+curl -i -X POST http://localhost:8000/story -H "Content-Type: application/json" \
+  -d '{"child_name":"A","theme":"b"}'                  # 401 BEFORE Gemini is called
+
 # data
 docker exec ai-apps-pg psql -U postgres -d ai_apps \
   -c "SELECT id, question, created_at FROM interactions ORDER BY id DESC;"
 ```
+
+The `POST` cases matter for a reason beyond access control: the dependency runs
+**before** the handler, so unauthenticated traffic never reaches `call_gemini`
+and burns **no free-tier quota**. Check the ordering, not just the status code —
+a 401 returned after the model call would look identical from outside.
 
 `/healthz` reports each dependency separately on purpose. It always returns
 **200** — a diagnostic, not a gate.
@@ -671,9 +1030,48 @@ docker exec ai-apps-pg psql -U postgres -d ai_apps \
 Locally: both servers run (backend `:8000`, frontend `:5500`), blank input → 400,
 malformed body → 422, `python -m scripts.smoke_gemini` passes both apps.
 
-**Outstanding:**
+**Closed since:**
 
-1. **Vercel ↔ GitHub link** — until then `git push` redeploys only the backend
-2. **Revoke both deploy tokens** — no longer needed; the Render one was exposed
-   earlier in the session
-3. **2026-09-07** — free Postgres expires; `/healthz` will show `postgres: false`
+1. ✅ **Vercel ↔ GitHub link** — `git push` now deploys both halves; first
+   webhook build reached the CDN in ~40s. `scripts/deploy_frontend.py` deleted
+   with it, since it existed only to cover the missing link.
+2. ✅ **Both deploy tokens rotated** — everything exposed earlier in the session
+   is dead, and nothing in the repo reads either token now.
+3. ✅ **Google sign-in, and the history leak it closed** (below).
+
+## Sign-in — added 8 Aug 2026
+
+**Production database migrated**: `users` created, nullable `user_id` added to
+both tables, `(user_id, id DESC)` indexed on both. `ipAllowList` was opened to a
+single `/32` for the migration and closed again — and *verified* closed by
+attempting a real connection afterwards and being refused, not by reading the
+API's response to the PATCH.
+
+Verified locally, and this is the record to re-run after any change to
+`auth_service.py` or the CORS config:
+
+| Check | Result |
+|---|---|
+| `GET /stories`, `GET /history` with no token | **401** (was 200 + every user's data) |
+| `POST /story`, `POST /ask` with no token | **401 before Gemini is called** — unauthenticated traffic burns no quota |
+| Preflight carrying `Access-Control-Request-Headers: Authorization` | **400 → 200**, with `Authorization` in `access-control-allow-headers` |
+| Rogue-origin preflight | still **400**, no allow-origin — unchanged by any of this |
+| Two users, two tokens, same endpoints | **no cross-user leakage** in either app |
+| `/admin/usage` | SQL verified by calling `fetch_usage()` directly — the route is behind a token that cannot be minted locally |
+
+## Outstanding
+
+1. **2026-09-07** — free Postgres expires; `/healthz` will show `postgres: false`.
+   **This is now worse than it was.** Before sign-in it cost the story log; now
+   the `users` table dies with it, so every account goes too. Everyone signs in
+   again into an empty history, and there is no export. This is the top risk in
+   the project and it has a fixed date.
+2. **`GOOGLE_CLIENT_ID` in `frontend/config.js` is still the placeholder**
+   (`REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com`). Until the real value is
+   pasted in and pushed, the deployed frontend cannot sign anyone in — and the
+   failure is at Google's end, so the backend log stays empty. Assert on the
+   deployed bytes, not on the file you edited:
+
+   ```bash
+   curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep GOOGLE_CLIENT_ID
+   ```

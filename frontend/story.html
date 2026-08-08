@@ -14,6 +14,13 @@
     <a class="back" href="index.html">&larr; All apps</a>
     <h1>🌙 Bedtime Story</h1>
 
+    <div class="authbar">
+        <div id="g-signin"></div>
+        <span id="auth-hint" class="auth-hint">Sign in with Google to hear a story.</span>
+        <span id="auth-who" class="auth-who" hidden></span>
+        <button type="button" id="signout" class="signout" hidden>Sign out</button>
+    </div>
+
     <label for="child-name">Who is the story for?</label>
     <input id="child-name" type="text" placeholder="Maya"
            autocapitalize="words" autocorrect="off" spellcheck="false"
@@ -31,7 +38,9 @@
         <button type="button" data-length="long"   aria-pressed="false">Longer</button>
     </div>
 
-    <button id="tell-btn" class="primary">Tell me a story</button>
+    <!-- Starts disabled: the page ships in the signed-out state, and the form
+         stays visible because a hidden form reads as a broken page. -->
+    <button id="tell-btn" class="primary" disabled>Tell me a story</button>
 
     <div id="answer" aria-live="polite"></div>
     <div id="error" role="alert"></div>
@@ -95,9 +104,10 @@
     nameEl.addEventListener("change", () =>
       localStorage.setItem("childName", nameEl.value.trim()));
 
-    // Enter submits, which is what the phone keyboard's Go key implies.
+    // Enter submits, which is what the phone keyboard's Go key implies. The
+    // button's own state is the gate, or Enter would bypass the signed-out lock.
     for (const el of [nameEl, themeEl]) {
-      el.addEventListener("keydown", e => { if (e.key === "Enter") tell(); });
+      el.addEventListener("keydown", e => { if (e.key === "Enter" && !btn.disabled) tell(); });
     }
 
     // --- History: collapsed, or ten full stories bury the page --------------
@@ -117,9 +127,14 @@
         </details></li>`).join("");
     }
 
+    // /stories is per-user and authenticated, so there is nothing to fetch until
+    // someone is signed in - and asking anyway would just be a 401.
     async function loadHistory() {
+      const headers = authHeaders();
+      if (!headers) return;
       try {
-        const r = await fetch(`${BACKEND_URL}/stories`);
+        const r = await fetch(`${BACKEND_URL}/stories`, {headers});
+        if (r.status === 401) return handleAuthExpired(errEl);
         if (r.ok) renderHistory(await r.json());
       } catch {
         errEl.textContent = `Cannot reach the backend at ${BACKEND_URL}.`;
@@ -189,6 +204,9 @@
       if (!child_name) { errEl.textContent = "Who is the story for?"; nameEl.focus(); return; }
       if (!theme) { errEl.textContent = "Pick a suggestion, or type what it should be about."; themeEl.focus(); return; }
 
+      const headers = authHeaders();
+      if (!headers) return handleAuthExpired(errEl);
+
       localStorage.setItem("childName", child_name);
       btn.disabled = true;
       btn.textContent = "Writing…";
@@ -196,10 +214,17 @@
       try {
         const r = await fetch(`${BACKEND_URL}/story`, {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers,
           body: JSON.stringify({ child_name, theme, length }),
         });
+        if (r.status === 401) {
+          stopWriting();
+          ansEl.textContent = "";
+          return handleAuthExpired(errEl);
+        }
         const data = await r.json();
+        // 429 and 502 arrive as {"detail": "..."} already written for a person;
+        // pass them through rather than inventing our own wording.
         if (!r.ok) throw new Error(data.detail || "Request failed");
         stopWriting();
         renderStory(data.story);
@@ -211,13 +236,47 @@
           ? `Cannot reach the story server. If it was asleep, wait a moment and try again.`
           : e.message;
       } finally {
-        btn.disabled = false;
+        // Not plain `false`: a 401 above signed us out, and re-enabling the
+        // button would offer a request that cannot succeed.
+        btn.disabled = !getToken();
         btn.textContent = "Tell me a story";
       }
     }
 
     btn.addEventListener("click", tell);
-    loadHistory();
+
+    // --- Sign-in ------------------------------------------------------------
+    const hintEl = $("auth-hint"), whoEl = $("auth-who");
+    const signoutBtn = $("signout"), buttonEl = $("g-signin");
+
+    initGoogleAuth({
+      buttonEl,
+      onSignIn: user => {
+        whoEl.textContent = `Signed in as ${user.name || user.email}`;
+        whoEl.hidden = false;
+        signoutBtn.hidden = false;
+        hintEl.hidden = true;
+        buttonEl.hidden = true;
+        btn.disabled = false;
+        loadHistory();
+      },
+      onSignOut: () => {
+        whoEl.hidden = true;
+        signoutBtn.hidden = true;
+        hintEl.hidden = false;
+        buttonEl.hidden = false;
+        btn.disabled = true;
+        // The story on screen and the earlier ones belong to one family, so
+        // they go when that person does.
+        stopWriting();
+        ansEl.textContent = "";
+        renderHistory([]);
+      },
+    });
+    signoutBtn.addEventListener("click", signOut);
     </script>
+
+    <script src="https://accounts.google.com/gsi/client" async defer
+            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
 </body>
 </html>

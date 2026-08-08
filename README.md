@@ -7,10 +7,15 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 |---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | Ask a question, get a short answer. Every exchange is saved. |
 | 2 | 🌙 Bedtime Story | `story.html` | A gentle ~200-word story built around a child's name and a theme. |
+| 📊 | Usage | `admin.html` | Owner-only: who has signed in, and what they've made. Not linked from the hub. |
 
 **Single-turn** means one request in, one answer out. The model never sees
 earlier exchanges — the saved history is for *you* to read back, not context fed
 into the prompt.
+
+**Sign in with Google to use either app.** Your stories and questions are yours;
+nobody else can read them. Pages still load signed out — the button is just
+disabled until you sign in.
 
 ## 🚀 Live
 
@@ -24,10 +29,11 @@ Deployed 8 August 2026 and verified in a real browser: both apps answer, both
 persist to Postgres, CORS allows the Vercel origin and refuses others.
 
 > **⚠️ The free Postgres expires 2026-09-07.** After that `/healthz` reports
-> `postgres: false` and writes fail.
+> `postgres: false` and writes fail. **Accounts live in the same database**, so
+> expiry loses every sign-in too, not just the story log.
 >
-> **⚠️ Vercel is not linked to GitHub.** `git push` redeploys the **backend
-> only**. Frontend changes need a manual upload — see *Deploying* below.
+> **✅ Both halves deploy on push.** Vercel was linked to GitHub on 8 Aug 2026,
+> so `git push origin master` now redeploys the backend *and* the frontend.
 >
 > **⏳ First request after 15 minutes idle takes 30–60s** — Render's free tier
 > sleeps. The page loads instantly (CDN); only the first API call waits.
@@ -35,32 +41,45 @@ persist to Postgres, CORS allows the Vercel origin and refuses others.
 ## Architecture
 
 ```
-Browser ──(static files)──► Vercel:  frontend/
+                        ┌──► Google: sign in, get an ID token (JWT)
+                        │
+Browser ──(static files)┴─► Vercel:  frontend/
    │
-   └──(fetch, cross-origin)──► Render:  FastAPI ──httpx──► Gemini API
-                                  │
-                                  └──psycopg──► Postgres (one DB, two tables)
+   └──(fetch, cross-origin, Authorization: Bearer <jwt>)──► Render:  FastAPI
+                                  ├──httpx───────► Gemini API
+                                  ├──google-auth─► Google certs (verify the JWT)
+                                  └──psycopg────► Postgres (one DB, three tables)
 ```
 
 The frontend and backend are **separate deployments on separate origins**, which
 is why CORS matters here. `frontend/config.js` derives the backend URL from the
 hostname, so there is nothing to edit when moving between local and production.
 
+Those two origins are also why sign-in uses a **Google ID token rather than a
+session cookie**: `vercel.app` and `onrender.com` are different registrable
+domains, so no cookie can span them — it would be a third-party cookie, which
+Safari blocks. There is no client secret, no redirect URI and no callback route;
+the browser is handed a signed token and the backend checks the signature.
+
 ```
 app/                       backend - API only, no HTML
   main.py                  CORS + routes + /healthz
   database.py              DATABASE_URL + get_conn()
-  schemas.py               chat models, then story models
+  schemas.py               chat models, story models, CurrentUser, usage models
   services/
     gemini_service.py      the only file that talks to Gemini
+    auth_service.py        the only file that talks to Google identity
     chat_service.py        save_interaction / fetch_recent_history
     story_service.py       save_story / fetch_recent_stories
+    admin_service.py       fetch_usage - totals, per-person counts, recent feed
 frontend/                  frontend - static, deploys to Vercel
-  index.html  chat.html  story.html
-  config.js                BACKEND_URL - auto-detected per environment
+  index.html  chat.html  story.html  admin.html
+  config.js                BACKEND_URL + escapeHtml + the sign-in client
   style.css
 sql/001_create_interactions.sql
 sql/002_create_stories.sql
+sql/003_create_users.sql       one row per Google account
+sql/004_add_user_id.sql        nullable user_id on both tables + indexes
 scripts/smoke_gemini.py    exercises both apps without touching the database
 render.yaml  Procfile      Render deploy
 vercel.json  .vercelignore Vercel deploy
@@ -79,6 +98,7 @@ Audited and upgraded 8 August 2026. All versions verified working together.
 | HTTP client | HTTPX | `0.28.*` | Calls the Gemini REST API. |
 | Database driver | psycopg `[binary]` | `3.3.*` | `[binary]` ships wheels — no local C toolchain. |
 | Config | python-dotenv | `1.2.*` | Loads `.env` in development. On Render the env vars are real. |
+| Sign-in | google-auth `[requests]` | `2.56.*` | Verifies the Google ID token on every authenticated request. **The `[requests]` extra is required, not optional** — `google.auth.transport.requests` imports `requests`, and without it the backend fails at *import*. That is why this backend has two HTTP clients: httpx is ours, `requests` is google-auth's transport. |
 | Database | PostgreSQL | **16** | Docker locally; Render managed in production. |
 | Model | Gemini | `gemini-3.5-flash-lite` | ~500 requests/day on the free tier (vs 20/min for `3.6-flash`), no hidden thinking tokens. Set via `GEMINI_MODEL`. |
 | Frontend | Plain HTML + CSS + vanilla JS | — | No build step, no framework, no bundler. |
@@ -108,7 +128,11 @@ First time only:
 docker run -d --name ai-apps-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ai_apps -p 5432:5432 postgres:16
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/001_create_interactions.sql
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/002_create_stories.sql
+docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/003_create_users.sql
+docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/004_add_user_id.sql
 ```
+
+In order — `004` adds foreign keys to `users`, so `003` has to exist first.
 
 **2. Backend** — terminal one:
 
@@ -133,6 +157,10 @@ Open <http://localhost:5500>.
 ```bash
 curl http://localhost:8000/healthz     # {"gemini":true,"postgres":true}
 python -m scripts.smoke_gemini         # Gemini only, no database
+
+# and the routes that must never answer without a token
+curl -i http://localhost:8000/stories  # 401
+curl -i http://localhost:8000/history  # 401
 ```
 
 Expect ~2.5s for a chat answer, ~6–8s for a story.
@@ -148,24 +176,42 @@ docker exec ai-apps-pg psql -U postgres -d ai_apps \
 ```
 
 Each row is a **complete, self-contained exchange** — question, answer, model,
-timestamp. Nothing links one row to the next. That's the single-turn design: a
-log of exchanges, not a conversation transcript.
+timestamp, and since sign-in a `user_id`. Nothing links one row to the *next*.
+That's the single-turn design: a log of exchanges, not a conversation transcript.
+
+Rows written before sign-in existed have `user_id IS NULL` and always will —
+they show up as *"(before sign-in)"* on the usage page rather than being dropped.
+For "who uses this and what do they do", `/admin/usage` has the summary and
+`CLAUDE.md` → *Reading the tracking data* has the queries.
 
 Data survives `docker stop`/`start`; lost only on `docker rm`.
 
 ## API
 
-| Method | Route | Purpose |
-|---|---|---|
-| `GET` | `/` | JSON banner — confirms the API is up |
-| `POST` | `/ask` | `{question}` → `{answer, history[]}` |
-| `GET` | `/history` | 10 most recent exchanges |
-| `POST` | `/story` | `{child_name, theme, length?}` → `{story, history[]}`. `length` is `short` \| `medium` \| `long`, defaulting to `medium`. |
-| `GET` | `/stories` | 10 most recent stories |
-| `GET` | `/healthz` | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
+| Method | Route | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/` | — | JSON banner — confirms the API is up |
+| `POST` | `/ask` | 🔐 | `{question}` → `{answer, history[]}` |
+| `GET` | `/history` | 🔐 | Your 10 most recent exchanges |
+| `POST` | `/story` | 🔐 | `{child_name, theme, length?}` → `{story, history[]}`. `length` is `short` \| `medium` \| `long`, defaulting to `medium`. |
+| `GET` | `/stories` | 🔐 | Your 10 most recent stories |
+| `GET` | `/admin/usage` | 🔐 owner | Totals, per-person counts, and the 20 most recent actions |
+| `GET` | `/healthz` | — | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
 
-Errors: `400` blank input or unknown length · `422` malformed body (Pydantic) ·
-`429` free-tier quota exceeded · `502` Gemini or Postgres unreachable.
+🔐 means `Authorization: Bearer <google-id-token>`. History is **per user** — the
+`user_id` comes from the verified token, never from the request body.
+
+Errors: `400` blank input or unknown length · `401` missing, expired or invalid
+token · `403` signed in but not `ADMIN_EMAIL` · `422` malformed body (Pydantic) ·
+`429` free-tier quota exceeded · `502` Gemini, Postgres, **or Google's certs
+endpoint** unreachable.
+
+`401` and `502` are kept apart deliberately: *"your sign-in has expired"* is
+useless advice to someone holding a valid token whose verification simply could
+not reach Google.
+
+The `401` is raised **before** the model is called, so unauthenticated traffic
+costs no Gemini quota.
 
 ### Built for a tired parent in a dark room
 
@@ -187,62 +233,120 @@ because ten full stories inline is ~1,800 words of scrolling on a phone.
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/ai_apps` |
 | `FRONTEND_ORIGINS` | Comma-separated origins allowed to call the API |
+| `GOOGLE_CLIENT_ID` | The OAuth 2.0 **Web application** client ID — see below |
+| `ADMIN_EMAIL` | The one Google address allowed to read `/admin/usage` |
 
 Read with `os.environ["..."]` at import time, so a missing one is a loud
 `KeyError` at startup rather than a confusing failure later.
 
+On Render, `GOOGLE_CLIENT_ID` and `ADMIN_EMAIL` are `sync: false` in
+`render.yaml` — set them in the dashboard. Neither is a secret the way
+`GEMINI_API_KEY` is: the client ID is **public by design** (it ships in
+`frontend/config.js` too), and `ADMIN_EMAIL` is a personal address kept out of
+git, not a credential. Knowing it grants nothing — you still need a Google token
+proving you own it.
+
+### Creating the OAuth client
+
+There is **no API and no gcloud command** that lists or creates a consumer OAuth
+client. It is console-only, so this is by hand, once:
+
+1. <https://console.cloud.google.com/apis/credentials> — pick the project, and
+   **check which Google account the browser is signed in as.** Creating the
+   client under one account and then signing into the app with another is the
+   easy mistake here: everything works except `/admin/usage`, which 403s.
+2. **OAuth consent screen** → scopes `openid`, `email`, `profile` → **Publish**.
+   Leaving it in *Testing* caps the app at 100 hand-added test users. At these
+   scopes publishing needs no Google review and shows no "unverified app"
+   warning, so there is no reason to stay in Testing.
+3. **Create credentials → OAuth client ID → Web application.**
+4. **Authorized JavaScript origins** — *not* redirect URIs. This flow never
+   redirects and has no redirect URI at all:
+   - `http://localhost:5500`
+   - `https://your-project.vercel.app`
+
+   No trailing slash, no path, or you get `origin_mismatch` at runtime.
+   Changes take about **5 minutes to propagate** — a brand-new client that fails
+   straight away is usually just not live yet.
+5. Copy the client ID into **three** places: `.env`, the Render dashboard, and
+   `GOOGLE_CLIENT_ID` in `frontend/config.js`. A stale value there rejects every
+   sign-in silently, because it is what the token's `aud` claim is checked
+   against.
+
+`frontend/config.js` ships with a placeholder
+(`REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com`). Check the **deployed**
+file, not the one you edited — the failure is at Google's end, so nothing appears
+in the backend log:
+
+```bash
+curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep GOOGLE_CLIENT_ID
+```
+
 `frontend/config.js` — `BACKEND_URL` is **auto-detected** from the hostname:
 localhost talks to the local backend, anything else to production. Nothing to
-edit per environment. Public by definition; **never put a key in `frontend/`** —
-every visitor can read it.
+edit per environment. It also holds `GOOGLE_CLIENT_ID` and the whole sign-in
+client. Public by definition; **never put a key in `frontend/`** — every visitor
+can read it. The client ID is not a key: this flow has **no client secret**, and
+that is precisely why it was chosen for a static frontend.
 
 `.render.env` and `.vercel.env` — **tooling only**. They hold account-wide
-control-plane keys, are gitignored, and must never be deployed. Revoke both once
-deploying is finished.
+control-plane keys, are gitignored, and must never be deployed. Both tokens were
+rotated on 8 Aug 2026, so anything exposed earlier is dead.
+
+Nothing in the repo reads them any more: both hosts deploy from Git, and
+`deploy_frontend.py` — the only consumer `VERCEL_TOKEN` ever had — was deleted
+once the Vercel link went live. Keep the files only if you use the APIs by hand;
+otherwise revoking both leaves nothing to leak.
 
 ## Deploying
 
-### Backend — automatic ✅
-
-`git push origin master` redeploys Render. Nothing else to do.
-
-### Frontend — manual, until Vercel is linked ⚠️
-
-Vercel's GitHub App cannot see this private repo, so pushes do **not** redeploy
-the frontend. Upload it directly instead:
-
-```powershell
-python scripts\deploy_frontend.py
-```
-
-**To fix it properly** (then pushes deploy both halves):
-<https://github.com/settings/installations> → **Vercel** → **Configure** →
-*Repository access* → add `ai-app-bedtimestory` → **Save**. Then connect the
-project in Vercel → Project → Settings → Git.
-
-Those are **two separate steps** — granting access in GitHub does not connect the
-project in Vercel. Confirm it actually worked:
+Both halves deploy on push ✅
 
 ```bash
-curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
-  "https://api.vercel.com/v9/projects/ai-app-bedtimestory?teamId=$TEAM"
-# "link" must be an object, not null
+git push origin master   # Render rebuilds the backend, Vercel rebuilds frontend/
 ```
 
-Making the repo public will **not** fix it — Vercel needs the App for webhooks,
-which is what turns a push into a deploy.
+Render reads `render.yaml` and `Procfile`; Vercel reads `vercel.json`, whose
+`outputDirectory: "frontend"` is what makes a Git build publish `frontend/` at
+the site root. Verified 8 Aug 2026: a push reached the CDN in about 40 seconds.
+
+### If the Vercel link ever breaks
+
+Linking is **two separate steps**, and doing only the first is the usual cause of
+"connected, but pushes do nothing":
+
+1. <https://github.com/settings/installations> → **Vercel** → **Configure** →
+   *Repository access* → add `ai-app-bedtimestory` → **Save**
+2. Vercel → Project → **Settings → Git** → connect the repository
+
+Making the repo public will **not** substitute for this — Vercel needs the
+GitHub App for webhooks, and the webhook is what turns a push into a deploy.
+
+Linking subscribes to **future** pushes; it does not build the current commit.
+After linking, the site keeps serving the previous build until the next push, so
+verify against the deployed bytes rather than the dashboard badge:
+
+```bash
+curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep escapeHtml
+```
 
 ### If you ever rebuild from scratch
 
 ⚠️ **Circular dependency.** The frontend needs the backend's URL; the backend's
 CORS needs the frontend's URL. Neither exists first, so it takes two passes:
 
-1. **Render** — create the service + Postgres, set `GEMINI_API_KEY`, apply both
-   migrations. Note the backend URL.
+1. **Render** — create the service + Postgres, set `GEMINI_API_KEY`, apply all
+   four migrations in order. Note the backend URL.
 2. Set `BACKEND_URL` in `frontend/config.js`, commit, push.
 3. **Vercel** — deploy. Read the production alias from the response; don't assume
    it.
 4. Set `FRONTEND_ORIGINS` on Render to that alias. Redeploy.
+5. Create the OAuth client (above) with that alias as an **authorized JavaScript
+   origin**, then set `GOOGLE_CLIENT_ID` and `ADMIN_EMAIL` on Render and put the
+   client ID in `frontend/config.js`.
+
+Sign-in joins the circular dependency rather than escaping it: the OAuth client
+needs the Vercel origin, which does not exist until step 3.
 
 Render's Postgres refuses external connections by default (`ipAllowList: []`),
 and reports it as `SSL connection has been closed unexpectedly`. To run
@@ -262,6 +366,12 @@ Honest edges of a single-turn, ungrounded app — not bugs:
   facts.
 - **No clarifying questions.** Ambiguous prompts get hedged answers covering every
   interpretation, because there's no next turn in which to ask.
+- **No walk-up use.** Sign-in is required to generate anything. That was a real
+  property of the earlier version and it is gone — the trade is recorded in
+  `PRD.md` §5.1.
+- **Verification costs a round trip.** Every authenticated request makes one
+  outbound call to Google's certs endpoint; google-auth doesn't cache them.
+  Invisible next to a Gemini call, measurable on `/history`.
 
 ## Tuning the output
 
@@ -273,11 +383,15 @@ where the learning is.
 ## Adding a third app
 
 1. A system prompt constant in `gemini_service.py`
-2. A `<name>_service.py` with save + fetch
+2. A `<name>_service.py` with save + fetch, both taking a `user_id`
 3. Schemas in `schemas.py`
 4. A page in `frontend/`, and a card on the hub in `frontend/index.html`
-5. A `sql/00N_create_<name>.sql`
-6. Routes in `main.py`
+5. A `sql/00N_create_<name>.sql`, with a nullable `user_id REFERENCES users(id)`
+   and a `(user_id, id DESC)` index
+6. Routes in `main.py`, each taking `user: CurrentUser = Depends(current_user)`
+
+Skip steps 2, 5 or 6's dependency and the new app is the one that leaks
+everyone's data — which is exactly what `/stories` did before sign-in existed.
 
 ## Troubleshooting
 
@@ -286,6 +400,11 @@ where the learning is.
 | `Failed to fetch` in the browser, **nothing in the backend log** | CORS blocked the preflight — the request never arrived | Check `FRONTEND_ORIGINS` matches the frontend origin exactly, scheme and port included |
 | New routes 404, edits do nothing, **no access-log lines** | A stale uvicorn worker is still serving | See `CLAUDE.md` → orphaned workers. Check reality with `curl localhost:8000/openapi.json` |
 | `KeyError: 'GEMINI_API_KEY'` | No `.env` in the project root | `cp .env.example .env` and fill it in |
+| `ModuleNotFoundError: No module named 'requests'` at startup | `google-auth` installed without its extra | The pin must be `google-auth[requests]`. Re-run `pip install -r requirements.txt` |
+| Every sign-in fails, `401`, nothing obviously wrong | `GOOGLE_CLIENT_ID` doesn't match the token's `aud` | It must be identical in `.env`, Render, **and** `frontend/config.js` |
+| `origin_mismatch` when the Google button is clicked | The page's origin isn't authorized on the OAuth client | Add it as an **authorized JavaScript origin** — no trailing slash, no path. Allow ~5 min to propagate |
+| Signed in fine, `/admin/usage` says "for the app owner only" | Signed in as a different Google account than `ADMIN_EMAIL` | Check which Chrome profile the browser used, then sign out and back in |
+| The Google button never appears | `accounts.google.com` blocked by a content blocker or network | The page says so where the button would be — there's no fallback |
 | `/healthz` shows `postgres: false` | Container not running | `docker start ai-apps-pg` |
 | Request hangs ~10s then 502 | Postgres unreachable; Windows blackholes the closed port | Start the container. `connect_timeout=5` makes this fail in seconds, not forever |
 | `ModuleNotFoundError: No module named 'app'` | Ran a script by path | `python -m scripts.smoke_gemini` from the project root |

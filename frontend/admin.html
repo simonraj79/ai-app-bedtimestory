@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#14161c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Usage">
+    <title>Usage — AI Apps</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<!-- Deliberately not linked from the hub: this is the owner's page, and the
+     backend refuses it to everyone else regardless of who finds the URL. -->
+<body>
+    <a class="back" href="index.html">&larr; All apps</a>
+    <h1>📊 Usage</h1>
+
+    <div class="authbar">
+        <div id="g-signin"></div>
+        <span id="auth-hint" class="auth-hint">Sign in with Google to see usage.</span>
+        <span id="auth-who" class="auth-who" hidden></span>
+        <button type="button" id="signout" class="signout" hidden>Sign out</button>
+    </div>
+
+    <div id="error" role="alert"></div>
+
+    <div id="usage" hidden>
+        <div class="stats" id="totals"></div>
+
+        <h2>People</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Who</th><th class="num">Stories</th><th class="num">Questions</th><th>Last seen</th></tr>
+                </thead>
+                <tbody id="users"></tbody>
+            </table>
+        </div>
+
+        <h2>Recent activity</h2>
+        <ol id="recent"><li class="empty">Nothing yet.</li></ol>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+    const $ = id => document.getElementById(id);
+    const errEl = $("error"), usageEl = $("usage");
+
+    // Every field below came out of the database, so every field goes through
+    // escapeHtml - counts included, because a count is only a number until the
+    // day the query returns something else.
+    function renderUsage(data) {
+      $("totals").innerHTML = [
+        [data.totals.users, "people"],
+        [data.totals.stories, "stories"],
+        [data.totals.questions, "questions"],
+      ].map(([n, k]) => `
+        <div class="stat">
+          <span class="n">${escapeHtml(String(n))}</span>
+          <span class="k">${escapeHtml(k)}</span>
+        </div>`).join("");
+
+      // name and last_seen_at are the two columns that can legitimately be
+      // empty; escapeHtml calls .replace, so a null would throw and take the
+      // whole page down rather than leaving one blank cell.
+      $("users").innerHTML = data.users.map(u => `
+        <tr>
+          <td>
+            <span class="who">${escapeHtml(u.name || "—")}</span>
+            <span class="mail">${escapeHtml(u.email)}</span>
+            <span class="joined">joined ${escapeHtml(u.created_at)}</span>
+          </td>
+          <td class="num">${escapeHtml(String(u.stories))}</td>
+          <td class="num">${escapeHtml(String(u.questions))}</td>
+          <td class="when">${escapeHtml(u.last_seen_at || "—")}</td>
+        </tr>`).join("");
+
+      const recent = $("recent");
+      if (!data.recent.length) {
+        recent.innerHTML = '<li class="empty">Nothing yet.</li>';
+        return;
+      }
+      recent.innerHTML = data.recent.map(r => `
+        <li>
+          <span class="kind">${escapeHtml(r.kind)}</span>
+          <span class="detail">${escapeHtml(r.detail)}</span>
+          <span class="meta">${escapeHtml(r.email)} · ${escapeHtml(r.created_at)}</span>
+        </li>`).join("");
+    }
+
+    async function loadUsage() {
+      const headers = authHeaders();
+      if (!headers) return;
+      errEl.textContent = "";
+      try {
+        const r = await fetch(`${BACKEND_URL}/admin/usage`, {headers});
+        if (r.status === 401) return handleAuthExpired(errEl);
+        if (r.status === 403) {
+          // Signed in fine, just not the owner. Say that, rather than showing
+          // the backend's wording or an empty page that looks broken.
+          errEl.textContent = "This page is for the app owner only.";
+          return;
+        }
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Request failed");
+        renderUsage(data);
+        usageEl.hidden = false;
+      } catch (e) {
+        errEl.textContent = e.message === "Failed to fetch"
+          ? `Cannot reach the backend at ${BACKEND_URL}. On Render's free tier it may be waking up — wait 30-60s and reload.`
+          : e.message;
+      }
+    }
+
+    const hintEl = $("auth-hint"), whoEl = $("auth-who");
+    const signoutBtn = $("signout"), buttonEl = $("g-signin");
+
+    initGoogleAuth({
+      buttonEl,
+      onSignIn: user => {
+        whoEl.textContent = `Signed in as ${user.name || user.email}`;
+        whoEl.hidden = false;
+        signoutBtn.hidden = false;
+        hintEl.hidden = true;
+        buttonEl.hidden = true;
+        loadUsage();
+      },
+      onSignOut: () => {
+        whoEl.hidden = true;
+        signoutBtn.hidden = true;
+        hintEl.hidden = false;
+        buttonEl.hidden = false;
+        // Other people's emails must not stay on screen after sign-out.
+        usageEl.hidden = true;
+      },
+    });
+    signoutBtn.addEventListener("click", signOut);
+    </script>
+
+    <script src="https://accounts.google.com/gsi/client" async defer
+            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
+</body>
+</html>

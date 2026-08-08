@@ -8,8 +8,10 @@
 | **Frontend** | <https://ai-app-bedtimestory.vercel.app> |
 | **Backend** | <https://ai-app-bedtimestory.onrender.com> |
 
-⚠️ Free Postgres **expires 2026-09-07**. ⚠️ Vercel auto-deploy not yet wired —
-`git push` redeploys the backend only.
+⚠️ Free Postgres **expires 2026-09-07** — and since 8 Aug 2026 the `users` table
+lives there too, so **accounts die with it**. ✅ Auto-deploy wired on both halves —
+`git push` redeploys backend and frontend. 🔐 **Google sign-in is required to
+generate**; history is per-user.
 
 ---
 
@@ -23,6 +25,10 @@ architecture pointed at a narrower job.
 |---|---|---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | `POST /ask` | `interactions` | ✅ **Live** |
 | 2 | 🌙 Bedtime Story | `story.html` | `POST /story` | `stories` | ✅ **Live** |
+| — | 📊 Usage (owner only) | `admin.html` | `GET /admin/usage` | `users` + both | ✅ **Live** 8 Aug 2026 |
+
+Since 8 Aug 2026 both apps require **Google sign-in**, and each person sees only
+their own history. `GET /` and `GET /healthz` are the only open routes.
 
 ## 2. Problem
 
@@ -42,10 +48,12 @@ again.
 
 | User | Need |
 |---|---|
-| Simon (operator) | Fast, private, no login friction. A record he owns. |
+| Simon (operator) | ~~Fast, private, no login friction.~~ A record he owns, **and to know who else is using it.** |
+| Any signed-in person | Their own stories and questions, visible to nobody else. |
 | Child (audience, app 2) | A story with their name in it, that isn't frightening. |
 
-Assumed a **single household**, no accounts.
+~~Assumed a **single household**, no accounts.~~ **Superseded 8 Aug 2026** — see
+§5.1.
 
 ## 5. Scope
 
@@ -67,10 +75,38 @@ Assumed a **single household**, no accounts.
 |---|---|
 | Conversation / "continue the story" | Makes it multi-turn: session keys, growing token cost, per-user isolation. |
 | Grounding / web search | Would fix stale answers (§11) but is a distinct feature with its own failure modes. |
-| Accounts and login | Large, unrelated to the product, wrong for a bedtime device. |
+| ~~Accounts and login~~ | ~~Large, unrelated to the product, wrong for a bedtime device.~~ **Reversed 8 Aug 2026 — see §5.1.** |
 | Streaming tokens | 2–8s is tolerable. Adds real complexity. |
 | Illustrations, narration, PDF | See §8 — decided, not overlooked. |
 | Tests | Not in V1, per the course doctrine this inherits. |
+
+### 5.1 The goal changed — accounts are now in scope
+
+**What changed, in one sentence:** the app stopped being a single-household tool
+and became one whose operator wants to know *who* uses it and *what they do*.
+That question is unanswerable without identity, so "no accounts" had to go.
+
+Shipped 8 Aug 2026: Google sign-in (ID-token flow), per-user history, a `users`
+table, and an owner-only `/admin/usage` page.
+
+**What it cost — stated plainly, because the original entry was right about it:**
+
+| Lost | Detail |
+|---|---|
+| **Walk-up use** | The app is no longer usable by someone who just opens the page. A tap on the Google button now stands between a tired parent and a story. This was a real property of V1 and it is gone. |
+| **Zero-dependency start** | Sign-in needs `accounts.google.com` to load. Content blockers and some networks break it; `config.js` says so rather than leaving a dead button, but it is a failure mode V1 did not have. |
+| **A second control plane** | A Google Cloud project, an OAuth client, and a consent screen now have to exist and stay correct. See `CLAUDE.md` — none of it can even be *listed* from a terminal. |
+| **Latency on reads** | Every authenticated request costs one outbound call to Google's certs endpoint. Noise against Gemini; visible on `/history`. |
+
+**What it bought, beyond the tracking:** it closed a real leak. Before this
+change, `curl https://ai-app-bedtimestory.onrender.com/stories` — no token, no
+`Origin` header — returned **200 and 3,099 bytes** of every child's name, theme
+and full story. Verified, not theorised. The §12 "open API abuse" risk and the
+§11 "CORS is not authentication" limit were describing this exact hole.
+
+The mitigation for the cost is deliberate and thin: pages **render signed out**
+with the submit button disabled and a one-line hint. A hidden form would have
+been less code and reads as a broken app.
 
 ## 6. Design
 
@@ -128,6 +164,58 @@ CREATE TABLE interactions (            CREATE TABLE stories (
 `model_name` per row on purpose: when the model changes you can tell which rows
 came from which, and whether quality moved.
 
+Since 8 Aug 2026, a third table and one column on each of the other two:
+
+```sql
+CREATE TABLE users (                    ALTER TABLE interactions
+    id           SERIAL PRIMARY KEY,      ADD COLUMN user_id INTEGER
+    google_sub   TEXT NOT NULL UNIQUE,    REFERENCES users(id);
+    email        TEXT NOT NULL,
+    name         TEXT NOT NULL,         ALTER TABLE stories
+    picture      TEXT,                    ADD COLUMN user_id INTEGER
+    created_at   TIMESTAMPTZ DEFAULT NOW(),  REFERENCES users(id);
+    last_seen_at TIMESTAMPTZ DEFAULT NOW()
+);                                      -- + (user_id, id DESC) on both
+```
+
+Three decisions worth keeping:
+
+- **Keyed on `google_sub`, not email.** The `sub` claim is stable for the life of
+  the account; an email can be changed by its owner. Keyed on email, a rename
+  forks one person into two rows and splits their history between them.
+- **`user_id` is NULLABLE.** The 3 stories and 3 interactions already in
+  production predate sign-in. `NOT NULL` would need a fabricated owner — a lie in
+  the data. `NULL` means *"before sign-in"*, and `/admin/usage` labels those rows
+  that way rather than dropping them, so totals and feed agree.
+- **No events or analytics table.** `stories` and `interactions` already record
+  what people do, with timestamps, and `users.last_seen_at` is maintained by the
+  same upsert that authenticates — so return visits come for free. A fourth table
+  would duplicate rows that already exist in order to count them. The queries are
+  in `CLAUDE.md` → *Reading the tracking data*.
+
+### 6.6 Sign-in is an ID token, not a session
+
+Google Identity Services hands the browser a signed JWT; the browser sends it as
+`Authorization: Bearer <jwt>`; the backend verifies the signature against
+Google's public keys. **No client secret, no redirect URI, no callback route, no
+cookie, no session store.**
+
+That is not a simplification — §6.2's split deploy ruled out the alternatives:
+
+- **A session cookie is impossible here.** `vercel.app` and `onrender.com` are
+  different registrable domains, both on the Public Suffix List, so no cookie can
+  span them. It would be a third-party cookie, which Safari blocks outright — the
+  app would work in Chrome and fail silently on the device most likely to be used
+  at bedtime.
+- **The authorization-code flow needs a client secret** and a server-side
+  callback. The secret cannot live in `frontend/`, which every visitor can read.
+
+`GOOGLE_CLIENT_ID` therefore ships in `frontend/config.js` and is **public by
+design**. The V1 invariant — *nothing secret in `frontend/`* — survives sign-in
+untouched, because this flow has no secret to place there.
+
+Full reasoning, and the gotchas it cost, in `CLAUDE.md`.
+
 ## 7. Non-functional
 
 | Requirement | Target | Actual |
@@ -141,7 +229,12 @@ came from which, and whether quality moved.
 | Config failure | Loud, at startup | `KeyError` on missing env var |
 | Health check | Never hangs | `connect_timeout=5` on the DB probe |
 | Cross-origin access | Declared origins only | Verified: allowed → 200, other → 400 |
-| Secrets in repo | Zero | Verified with `git check-ignore` and a shape-based key scan |
+| Authenticated access | Every generating route | Verified: no token → **401** on `/ask` `/history` `/story` `/stories` `/admin/usage` |
+| Unauthenticated quota burn | None | The dependency runs **before** the handler, so a 401 costs no Gemini call |
+| Per-user isolation | No cross-user reads | Verified with two users and two tokens: no leakage in either app |
+| Admin access | One address | `403` for any signed-in caller who is not `ADMIN_EMAIL` |
+| Auth overhead | Acceptable | One outbound call to Google's certs per request — noise vs Gemini, visible on `/history` |
+| Secrets in repo | Zero | Verified with `git check-ignore` and a shape-based key scan. The OAuth client ID is public by design and is not one. |
 
 ## 8. Open decisions
 
@@ -185,19 +278,44 @@ connection string; `ipAllowList` is `[]`, so nothing outside Render's private
 network can reach it. It was opened to a single `/32` for the migration and
 closed immediately after.
 
+### Also shipped 8 Aug 2026 ✅
+
+1. **Vercel linked to GitHub** (milestone 13). Its GitHub App could not see the
+   private repo, so the first frontend release was uploaded directly via the API.
+   Now linked, so one `git push` deploys both halves and the drift risk is gone.
+   `scripts/deploy_frontend.py` was deleted with it — that script existed only to
+   cover the gap.
+2. **Both deploy tokens rotated** (milestone 14). The Render one was exposed
+   during setup; every token from that period is dead. Nothing in the repo reads
+   either token any more.
+3. **Google sign-in** (milestone 15). The OAuth client lives in Google Cloud
+   project `dsai-mod-2-group-project` (number `722888382160`), owned by
+   `simoraj@gmail.com` — **a different account from the machine's default Chrome
+   profile**, which is the easiest confusing mistake available here. Two new env
+   vars on Render, both `sync: false`: `GOOGLE_CLIENT_ID` (public — it also ships
+   in `frontend/config.js`) and `ADMIN_EMAIL` (`simoraj@gmail.com`; private, not
+   a credential).
+
+   **Production migrated 8 Aug 2026**: `users` created, nullable `user_id` added
+   to both tables, `(user_id, id DESC)` indexed on both. `ipAllowList` opened to
+   a single `/32` and closed again — and *verified* closed by attempting a real
+   connection and being refused, rather than by trusting the PATCH response.
+
 ### Remaining ⬜
 
-1. **Link Vercel to GitHub** — its GitHub App cannot see the private repo, so the
-   frontend was uploaded directly via the API. Until linked, `git push`
-   redeploys the **backend only** and the frontend can silently drift.
-   Fix: <https://github.com/settings/installations> → Vercel → Configure → add
-   the repo. (Or make the repo public — decision #7.)
-2. **Revoke both deploy tokens.** No longer needed; the Render one was exposed
-   during setup.
+One thing, and it blocks sign-in in production: **`GOOGLE_CLIENT_ID` in
+`frontend/config.js` is still `REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com`.**
+Until the real value is committed and pushed, the deployed frontend cannot sign
+anyone in — and because the failure happens at Google's end, the backend log
+stays empty. Verify against the deployed file, not the local one.
+
+After that, the next real work is decision #2 (child profiles).
 
 **Live free-tier constraints:**
 
-- Postgres **expires 2026-09-07**. `/healthz` will flip to `postgres: false`.
+- Postgres **expires 2026-09-07**. `/healthz` will flip to `postgres: false` —
+  and the `users` table goes with it, so **every account is lost**, not just the
+  story log. Everyone signs in again into an empty history.
 - The web service **sleeps after 15 minutes** idle; the next request takes
   30–60s. The frontend is on a CDN, so the *page* still loads instantly — only
   the first API call waits.
@@ -218,10 +336,11 @@ closed immediately after.
 | 10 | Render deploy: service + Postgres + migrations | ✅ |
 | 11 | Vercel deploy (direct upload) | ✅ |
 | 12 | Two-pass URL wiring, verified live in a browser | ✅ |
-| 13 | Vercel ↔ GitHub link (push-to-deploy both halves) | ⬜ needs repo access |
-| 14 | Revoke deploy tokens | ⬜ |
-| 15 | Child profiles | ⬜ decision #2 |
-| 16 | Narration and/or illustrations | ⬜ decision #1 |
+| 13 | Vercel ↔ GitHub link (push-to-deploy both halves) | ✅ 8 Aug 2026, verified live |
+| 14 | Rotate deploy tokens | ✅ 8 Aug 2026 |
+| 15 | Google sign-in, per-user history, `/admin/usage` | ✅ 8 Aug 2026, production migrated |
+| 16 | Child profiles | ⬜ decision #2 |
+| 17 | Narration and/or illustrations | ⬜ decision #1 |
 
 ## 11. Known limits — by design, not defects
 
@@ -231,8 +350,17 @@ closed immediately after.
 - **No clarifying questions.** Ambiguous prompts get hedged answers, because
   there is no next turn in which to ask.
 - **CORS is not authentication.** It stops other people's *websites* using this
-  API through their visitors' browsers. `curl` ignores it entirely — anyone can
-  still call the API directly. If that ever matters, it needs real auth.
+  API through their visitors' browsers. `curl` ignores it entirely. ✅ **Acted on
+  8 Aug 2026** — this was not theoretical: `curl /stories` with no token and no
+  `Origin` returned 200 and 3,099 bytes of every child's story. Every generating
+  route now requires a verified Google ID token and reads only that user's rows.
+  CORS is still not authentication; it is now no longer the only thing there.
+- **Sign-in is required to generate.** Someone who just opens the page cannot use
+  the app — see §5.1 for what that cost. Pages render signed out with the button
+  disabled rather than hiding the form.
+- **Sign-in depends on `accounts.google.com` loading.** Content blockers and some
+  networks break it. `config.js` says so instead of leaving a dead button, but
+  there is no fallback.
 
 ## 12. Risks
 
@@ -240,21 +368,28 @@ closed immediately after.
 |---|---|
 | Model produces something unsuitable for a child | System prompt constrains it; every story is stored and inspectable. Images would need a separate check. |
 | Stale facts presented confidently | Documented in §11. Grounding is decision #4. |
-| **Postgres dies 2026-09-07** | Hard date, now live. `/healthz` shows `postgres: false` when it happens. Migrate to a paid tier or recreate before then. Diarise it. |
-| **Frontend silently drifts from backend** | Vercel is not linked to Git, so `git push` updates only the backend. Any frontend change needs a manual upload until milestone 13. This is the most likely near-term footgun. |
+| **Postgres dies 2026-09-07 — and now takes every account with it** | Hard date, now live, and **worse since sign-in shipped**: `users` lives in the same free database, so expiry loses accounts, not just the story log. `/healthz` shows `postgres: false` when it happens. Migrate to a paid tier or recreate before then. There is no export. **Top risk in the project.** |
+| ~~Frontend silently drifts from backend~~ | ✅ **Closed 8 Aug 2026.** Vercel is linked to Git, so one `git push` deploys both halves and they can no longer diverge. Was the most likely near-term footgun. |
 | Cold start makes it feel broken at bedtime | Free tier sleeps after 15 min. The frontend is on a CDN so the *page* loads instantly; the first API call waits 30–60s. `index.html` surfaces this rather than failing silently. |
-| Open API abuse | CORS is not a control — `curl` ignores it. The endpoint is public now that it is deployed. Single-household use makes it low risk; if that changes, it needs real auth. |
+| ~~Open API abuse~~ | ✅ **Closed 8 Aug 2026.** It was not low risk and it was not hypothetical: `curl /stories` returned every user's data. Every generating route now needs a verified Google ID token, and reads are scoped to the caller's `user_id`. The 401 is raised **before** Gemini is called, so unauthenticated traffic burns no quota either. |
+| A single OAuth misconfiguration takes the whole app down | `GOOGLE_CLIENT_ID` is what `aud` is checked against, so a stale value rejects **every** sign-in with no error anywhere obvious. Bracket access makes a *missing* one a startup `KeyError`; a *wrong* one is silent. Authorized JavaScript origins must match exactly — no trailing slash, no path — and take ~5 min to propagate. |
+| The consent screen is left in Testing | Caps at 100 hand-added test users. Publishing needs no Google review with only `openid`/`email`/`profile`, so there is no reason to stay in Testing — but Testing is the default. |
+| Google's certs endpoint is unreachable | Verification is an outbound call per request. Returns `502` *"Could not reach Google to verify your sign-in"*, deliberately **not** 401 — telling a user with a valid token to sign in again is an unfixable loop from their side. |
 | Model produces something unsuitable | Every story is stored and inspectable. Images would need a separate check. |
 | Gemini free-tier rate limits | Single-household use is far below them. |
-| API key leaks | Three secret files, all gitignored, verified with `git check-ignore` and a shape-based scan. The Render key was exposed once and rotated. **Both deploy tokens still live — revoke them (milestone 14).** |
+| API key leaks | Three secret files, all gitignored, verified with `git check-ignore` and a shape-based scan. The Render key was exposed once and rotated. ✅ **Both deploy tokens rotated 8 Aug 2026**, so every token exposed during setup is dead. Nothing in the repo reads them now that both hosts deploy from Git. |
 | Divergence from the cohort's pins | Accepted in decision #5. If stuck, temporarily install the course's versions to reproduce a classmate's error. |
 
 ## 13. Immediate next steps
 
-1. **Revoke both deploy tokens** (milestone 14) — nothing needs them now.
-2. **Link Vercel to GitHub** (milestone 13) — one click, then push-to-deploy
-   works on both halves and risk #2 disappears.
-3. Diarise **7 September 2026**.
+1. **Diarise 7 September 2026** — the free Postgres expires. This is now the only
+   dated obligation, and the one thing that will take the app down if missed.
+   Since milestone 15 it also destroys every account, so the decision to make
+   before then is *paid tier or accept losing the users table*.
+2. **Publish the OAuth consent screen** if it is still in Testing. Free, no
+   review at these scopes, and it removes the 100-user cap before it is hit.
 
-After that, V1 is genuinely done and the next real work is decision #2 (child
-profiles) — the highest value-per-effort improvement remaining.
+Milestones 13, 14 and 15 were all closed on 8 Aug 2026. The next real work is
+decision #2 (child profiles) — the highest value-per-effort improvement
+remaining, and now cheaper than it was: `users` exists, so a profile is a table
+with a `user_id` rather than a new identity story.
