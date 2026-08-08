@@ -1,7 +1,8 @@
 // Where the FastAPI backend lives.
 //
+// Production:         https://ai-app-bedtimestory.onrender.com
 // Local development:  http://localhost:8000
-// Production:         your Render URL, e.g. https://ai-apps.onrender.com
 //
-// Change this one line after deploying the backend to Render. No trailing slash.
-const BACKEND_URL = "http://localhost:8000";
+// No trailing slash. Note the backend sleeps after 15 minutes on Render's free
+// tier, so the first request after an idle period takes 30-60 seconds.
+const BACKEND_URL = "https://ai-app-bedtimestory.onrender.com";
