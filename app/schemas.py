@@ -79,6 +79,16 @@ class MyChild(BaseModel):
     stories: int
 
 
+class MyStoryPoint(BaseModel):
+    """One story, enough of it to plot. Oldest first, so a chart reads left to right."""
+    created_at: str
+    child_name: str
+    theme: str
+    word_count: int | None = None
+    grade_level: float | None = None
+    genre: str | None = None
+
+
 class MyStats(BaseModel):
     stories: int
     words: int
@@ -91,6 +101,13 @@ class MyStats(BaseModel):
     unanalysed: int               # stories written before stats existed
     genres: list[MyGenre]
     children: list[MyChild]
+    series: list[MyStoryPoint]
+    # Decided on the server from the verified token's email. The browser must not
+    # work this out for itself: config.js can decode a JWT but cannot verify one,
+    # so a forged payload would show the link. It only draws a link either way -
+    # /admin/usage still returns 403 to anyone who is not the owner - but the flag
+    # should still come from the only party that actually knows.
+    is_admin: bool = False
 
 
 # --- Admin -------------------------------------------------------------------

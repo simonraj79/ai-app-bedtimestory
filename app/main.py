@@ -18,7 +18,7 @@ from app.services.gemini_service import (
     GEMINI_API_KEY, GEMINI_BASE_URL, call_gemini, generate_story,
 )
 from app.services.admin_service import fetch_usage
-from app.services.auth_service import admin_user, current_user
+from app.services.auth_service import ADMIN_EMAIL, admin_user, current_user
 from app.services.chat_service import save_interaction, fetch_recent_history
 from app.services.story_service import save_story, fetch_recent_stories, fetch_my_stats
 
@@ -86,7 +86,10 @@ def stories(user: CurrentUser = Depends(current_user)):
 # ten and look like the reader had stalled.
 @app.get("/me/stats", response_model=MyStats)
 def my_stats(user: CurrentUser = Depends(current_user)):
-    return fetch_my_stats(user.id)
+    # The email comes from the verified token, so this is the same comparison
+    # admin_user makes to gate /admin/usage - it just decides whether the page
+    # draws a link, rather than whether the data is served.
+    return fetch_my_stats(user.id, is_admin=user.email == ADMIN_EMAIL)
 
 
 # --- Admin -------------------------------------------------------------------

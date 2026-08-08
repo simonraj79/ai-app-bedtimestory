@@ -573,6 +573,132 @@ body.bedtime .stat {
     border-color: #2a3450;
 }
 
+/* --- Charts --------------------------------------------------------------- */
+
+.chart-sub {
+    margin: 0.2rem 0 0.9rem;
+    font-size: 0.85rem;
+    color: #7c88a5;
+}
+
+.chart {
+    margin-top: 0.4rem;
+}
+
+/* Charts wear the system sans, not the page's Georgia. A serif on axis ticks and
+   values reads as decoration and loses legibility at 10px. */
+/* No width:100% / height:auto - the viewBox is built to the container's real
+   pixel width, so scaling it here would reintroduce the multiplied text this was
+   written to avoid. */
+.chart svg {
+    display: block;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.chart-axis {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.3rem;
+    font-size: 0.8rem;
+    color: #7c88a5;
+}
+
+/* Collapsed by default: it is the accessible equivalent of the chart, not a
+   second thing to read. */
+.table-view {
+    margin-top: 0.8rem;
+}
+
+.table-view summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    font-size: 0.85rem;
+    color: #8f9bb8;
+    cursor: pointer;
+}
+
+.table-view summary:hover {
+    color: #e5c98a;
+}
+
+/* Text never wears the data colour - the gold bar beside it carries identity. */
+.c-val {
+    fill: #e8e3d8;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.c-ax {
+    fill: #8f9bb8;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Horizontal bars: label, track, count. The count sits at the tip so no value
+   is reachable only by hovering. */
+.hbar {
+    display: grid;
+    grid-template-columns: minmax(4.5rem, 7rem) 1fr auto;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.3rem 0;
+}
+
+.hbar-k {
+    font-size: 0.9rem;
+    color: #e8e3d8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hbar-track {
+    display: block;
+    height: 10px;
+    background: #1c2438;
+    border-radius: 5px;
+}
+
+.hbar-fill {
+    display: block;
+    height: 100%;
+    min-width: 4px;
+    background: #e5c98a;
+    border-radius: 5px;
+}
+
+.hbar-n {
+    font-size: 0.9rem;
+    color: #8f9bb8;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Meter: one value against a scale. The unfilled track is a darker step of the
+   same hue, so the state reads across the whole bar rather than only the fill. */
+.meter {
+    display: block;
+    height: 14px;
+    background: #4a4230;
+    border-radius: 7px;
+    overflow: hidden;
+}
+
+.meter-fill {
+    display: block;
+    height: 100%;
+    background: #e5c98a;
+    border-radius: 7px;
+}
+
+.meter-scale {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    color: #7c88a5;
+}
+
 /* A label and a count on one row, the count pushed to the end so a column of
    them lines up without a table. */
 .tally {

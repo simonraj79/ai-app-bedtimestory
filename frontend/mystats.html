@@ -30,17 +30,51 @@
         <div class="stats" id="totals"></div>
         <p id="span" class="hist-summary"></p>
 
+        <!-- One series per chart, so none of them carries a legend: the heading
+             says what is plotted, which is what a one-swatch legend box would
+             have restated. -->
+        <div id="length-section" hidden>
+            <h2>Story length</h2>
+            <p class="chart-sub">Words in each story, oldest first.</p>
+            <div class="chart" id="length-chart"></div>
+            <!-- Outside the SVG on purpose: HTML text keeps its real size instead
+                 of being multiplied by whatever the viewBox scale happens to be. -->
+            <div class="chart-axis"><span>oldest</span><span>newest</span></div>
+            <!-- The table twin. Only the tallest column is labelled, so without
+                 this the other values would be reachable by hovering alone - and
+                 a value you can only get to with a mouse is not available to a
+                 phone, a screen reader, or a keyboard. -->
+            <details class="table-view">
+                <summary>See the numbers</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Story</th><th class="num">Words</th><th>Level</th></tr></thead>
+                        <tbody id="length-table"></tbody>
+                    </table>
+                </div>
+            </details>
+        </div>
+
+        <div id="level-section" hidden>
+            <h2>Reading level</h2>
+            <p class="chart-sub" id="level-sub"></p>
+            <div class="meter-wrap" id="level-meter"></div>
+        </div>
+
         <div id="children-section" hidden>
             <h2>Who they were for</h2>
-            <ul class="tally" id="children"></ul>
+            <div class="chart" id="children"></div>
         </div>
 
         <div id="genres-section" hidden>
             <h2>What they were about</h2>
-            <ul class="tally" id="genres"></ul>
+            <div class="chart" id="genres"></div>
         </div>
 
         <p id="unanalysed" class="note" hidden></p>
+
+        <!-- Shown only to the owner, and only because the server said so. -->
+        <a id="admin-link" class="mystats-link" href="admin.html" hidden>📊 Everyone's usage &rarr;</a>
     </div>
 
     <!-- Not an error state: a reader who has just signed in has made nothing yet,
@@ -57,6 +91,111 @@
     <script>
     const $ = id => document.getElementById(id);
     const errEl = $("error"), mineEl = $("mine"), emptyEl = $("empty");
+
+    // --- Chart tokens --------------------------------------------------------
+    //
+    // ONE mark colour, not a palette. Every chart here plots a single series, and
+    // the categories (genre, a child's name) are nominal - reordering them changes
+    // nothing - so colouring each bar differently would spend the identity channel
+    // re-encoding what bar length already shows. Gold on this surface measures
+    // 10.77:1, well past the 3:1 marks need. TRACK doubles as the gridline: one
+    // step off the surface, hairline, solid, and meant to recede.
+    const INK = "#e5c98a";
+    const TRACK = "#2a3450";
+    const DIM_INK = "#4a4230";   // unfilled meter track: a darker step of the same hue
+
+    const svgEsc = s => escapeHtml(String(s));
+
+    // Columns: one per story, oldest on the left. 4px rounded data-end, square at
+    // the baseline, capped at 24px so the slot's leftover stays air.
+    //
+    // The viewBox is built to the container's real pixel width rather than a
+    // convenient number scaled to fit. A scaled viewBox multiplies EVERYTHING -
+    // the first version drew 14px bars and 9px labels, and at the 1.7x needed to
+    // fill the column they rendered as 24px bars under 16px axis text that shouted
+    // over the data. Pixels here are pixels.
+    function columnChart(points, width) {
+      const W = Math.max(width, 200);
+      const H = 120, PAD_T = 16;
+      const SLOT = W / points.length;
+      const BAR = Math.max(3, Math.min(24, SLOT - 6));   // 6px of air per slot
+      const max = Math.max(...points.map(p => p.value), 1);
+      const step = max > 200 ? 100 : 50;
+      const niceMax = Math.max(Math.ceil(max / step) * step, step);
+      const y = v => PAD_T + (H - PAD_T) * (1 - v / niceMax);
+
+      // Two gridlines and a baseline: enough to read against, few enough to recede.
+      const grid = [0, 0.5, 1].map(f => {
+        const gy = y(niceMax * f);
+        return `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="${TRACK}" stroke-width="1"/>`;
+      }).join("");
+
+      const peak = points.reduce((a, b, i) => points[a].value >= b.value ? a : i, 0);
+
+      const bars = points.map((p, i) => {
+        const bx = i * SLOT + (SLOT - BAR) / 2;
+        const by = y(p.value);
+        const bh = Math.max(H - by, 2);
+        // Rounded at the data end, square at the baseline: a rounded rect with the
+        // bottom corners squared off by a small overlapping rect.
+        return `<g><title>${svgEsc(p.title)}</title>` +
+          `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${BAR.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="${INK}"/>` +
+          `<rect x="${bx.toFixed(1)}" y="${Math.max(by + bh - 4, by).toFixed(1)}" width="${BAR.toFixed(1)}" height="4" fill="${INK}"/>` +
+          `</g>`;
+      }).join("");
+
+      // Label the tallest column only. A number on every bar is chaos and goes
+      // unread; the gridline label and the tooltips carry the rest.
+      const px = peak * SLOT + SLOT / 2;
+      const label = `<text x="${px.toFixed(1)}" y="${(y(points[peak].value) - 5).toFixed(1)}" text-anchor="middle" class="c-val">${svgEsc(points[peak].value)}</text>`;
+
+      return `<svg viewBox="0 0 ${W.toFixed(0)} ${H}" width="${W.toFixed(0)}" height="${H}" role="img"
+                   aria-label="Words in each story, oldest first. Longest ${svgEsc(points[peak].value)} words.">
+        ${grid}${bars}${label}
+        <text x="2" y="${(y(niceMax) - 4).toFixed(1)}" class="c-ax">${niceMax} words</text>
+      </svg>`;
+    }
+
+    // Horizontal bars for nominal categories. Same hue for every bar; the count
+    // rides the tip so no value depends on hovering.
+    function barList(rows) {
+      const max = Math.max(...rows.map(r => r.value), 1);
+      return rows.map(r => {
+        const pct = Math.round((r.value / max) * 100);
+        return `<div class="hbar">
+          <span class="hbar-k">${escapeHtml(r.label)}</span>
+          <span class="hbar-track"><span class="hbar-fill" style="width:${pct}%"></span></span>
+          <span class="hbar-n">${escapeHtml(String(r.value))}</span>
+        </div>`;
+      }).join("");
+    }
+
+    // Kept so the chart can be redrawn at the new width when the phone is turned
+    // - a viewBox sized in real pixels does not rescale itself.
+    let lengthPoints = null;
+
+    function drawLengthChart() {
+      if (!lengthPoints) return;
+      const host = $("length-chart");
+      host.innerHTML = columnChart(lengthPoints, host.clientWidth);
+    }
+
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawLengthChart, 150);
+    });
+
+    // A single value against a scale is a meter, not a one-bar bar chart. The
+    // unfilled track is a darker step of the same hue so the state reads across
+    // the whole bar.
+    function meter(value, max) {
+      const pct = Math.max(2, Math.min(100, Math.round((value / max) * 100)));
+      return `<div class="meter" role="img" aria-label="Average reading level ${svgEsc(value)} of ${svgEsc(max)}">
+        <span class="meter-fill" style="width:${pct}%"></span>
+      </div>
+      <div class="meter-scale"><span>easier</span><span>harder</span></div>`;
+    }
 
     // Everything below came out of the database, so everything goes through
     // escapeHtml - counts included, for the same reason it is done on the other
@@ -103,19 +242,53 @@
       $("span").textContent = "";
       $("span").innerHTML = bits.join(" · ");
 
+      // Only stories that were actually measured can be plotted. Two is the
+      // floor: a "chart" of one column is a stat tile wearing a costume.
+      const measured = (d.series || []).filter(p => p.word_count !== null && p.word_count !== undefined);
+      $("length-section").hidden = measured.length < 2;
+      if (measured.length >= 2) {
+        lengthPoints = measured.map(p => ({
+          value: p.word_count,
+          title: `${p.child_name} — ${p.theme}\n${p.word_count} words · ${p.created_at}`,
+        }));
+        drawLengthChart();
+        // Newest first here, the opposite of the chart: a chart is read as a
+        // trend left to right, a list is scanned for the most recent thing.
+        $("length-table").innerHTML = measured.slice().reverse().map(p => `
+          <tr>
+            <td><span class="who">${escapeHtml(p.child_name)} — ${escapeHtml(p.theme)}</span>
+                <span class="joined">${escapeHtml(p.created_at)}${p.genre ? " · " + escapeHtml(p.genre) : ""}</span></td>
+            <td class="num">${escapeHtml(String(p.word_count))}</td>
+            <td class="when">${escapeHtml(readingBand(p.grade_level))}</td>
+          </tr>`).join("");
+      }
+
+      // The scale runs to 8 because these are children's stories: past grade 8
+      // the band stops meaning anything useful to a parent, and a scale nothing
+      // ever reaches makes every story look easier than it is.
+      const LEVEL_MAX = 8;
+      $("level-section").hidden = d.avg_grade === null || d.avg_grade === undefined;
+      if (d.avg_grade !== null && d.avg_grade !== undefined) {
+        $("level-sub").textContent =
+          `On average ${readingBand(d.avg_grade)} — the scale runs from very easy to hard.`;
+        $("level-meter").innerHTML = meter(d.avg_grade, LEVEL_MAX);
+      }
+
       const children = d.children || [];
       $("children-section").hidden = !children.length;
-      $("children").innerHTML = children.map(c => `
-        <li><span class="k">${escapeHtml(c.child_name)}</span>
-            <span class="n">${escapeHtml(String(c.stories))}</span></li>`).join("");
+      $("children").innerHTML = barList(
+        children.map(c => ({label: c.child_name, value: c.stories})));
 
       // Genre comes from a keyword heuristic over the theme and the story, so it
       // is a rough shape of what gets asked for rather than a taxonomy.
       const genres = d.genres || [];
       $("genres-section").hidden = !genres.length;
-      $("genres").innerHTML = genres.map(g => `
-        <li><span class="k">${escapeHtml(g.genre)}</span>
-            <span class="n">${escapeHtml(String(g.stories))}</span></li>`).join("");
+      $("genres").innerHTML = barList(
+        genres.map(g => ({label: g.genre, value: g.stories})));
+
+      // Server-decided. See MyStats.is_admin for why the browser does not work
+      // this out for itself.
+      $("admin-link").hidden = !d.is_admin;
 
       // Say what is missing rather than quietly leaving it out of the averages.
       const un = $("unanalysed");

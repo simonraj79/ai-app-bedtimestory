@@ -3,7 +3,7 @@ from psycopg.rows import dict_row
 from fastapi import HTTPException
 
 from app.database import get_conn
-from app.schemas import MyChild, MyGenre, MyStats, Story
+from app.schemas import MyChild, MyGenre, MyStats, MyStoryPoint, Story
 from app.services.gemini_service import GEMINI_MODEL
 from app.services.text_stats import analyse
 
@@ -37,7 +37,7 @@ def save_story(child_name: str, theme: str, story: str, user_id: int) -> None:
         )
 
 
-def fetch_my_stats(user_id: int) -> MyStats:
+def fetch_my_stats(user_id: int, is_admin: bool = False) -> MyStats:
     """One reader's own totals, across everything they have made - not just the last ten.
 
     Every query here is filtered by user_id from the verified token. There is no
@@ -84,7 +84,25 @@ def fetch_my_stats(user_id: int) -> MyStats:
                 )
                 children = [MyChild(**row) for row in cur.fetchall()]
 
-        return MyStats(**totals, genres=genres, children=children)
+                # Oldest first so a chart reads left to right, but take the
+                # newest 30 - a chart of two hundred columns on a phone is a
+                # texture, not a reading.
+                cur.execute(
+                    "SELECT * FROM ( "
+                    "  SELECT to_char(created_at, 'YYYY-MM-DD') AS created_at, "
+                    "         child_name, theme, word_count, grade_level, genre, id "
+                    "  FROM stories WHERE user_id = %s ORDER BY id DESC LIMIT 30 "
+                    ") s ORDER BY s.id",
+                    (user_id,),
+                )
+                series = [
+                    MyStoryPoint(**{k: v for k, v in row.items() if k != "id"})
+                    for row in cur.fetchall()
+                ]
+
+        return MyStats(
+            **totals, genres=genres, children=children, series=series, is_admin=is_admin
+        )
     except psycopg.Error:
         raise HTTPException(
             status_code=502,
