@@ -14,9 +14,11 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 earlier exchanges — the saved history is for *you* to read back, not context fed
 into the prompt.
 
-**Sign in with Google to use either app.** Your stories and questions are yours;
-nobody else can read them. Pages still load signed out — the button is just
-disabled until you sign in.
+**Sign in with Google to use either app.** Your stories and questions are scoped
+to you — no other *user* can read them, which is what `WHERE user_id = %s`
+guarantees. The owner can, via `/admin/usage`; say so plainly rather than
+promising "only you", which no app with an admin view can honestly offer. Pages
+still load signed out — the button is just disabled until you sign in.
 
 Sign-in appears on the two app pages only, not on the hub. The hub carries a
 short *How it works* instead.

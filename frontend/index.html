@@ -63,8 +63,16 @@
                 about — under each story, and totalled up in
                 <strong>Your story stats</strong>.</li>
         </ol>
-        <p class="note">Everything you make is saved and shown only to you. You
-            can sign out from inside either app.</p>
+        <!-- This said "shown only to you", which was not true: /admin/usage shows
+             the owner every signed-in person's name and email, the child's name
+             and theme of every story, and the first 80 characters of every
+             question. Other USERS genuinely cannot see each other's work - that
+             is what WHERE user_id = %s guarantees - so the honest claim is the
+             narrower one, and it is still worth making. -->
+        <p class="note">Your stories and questions are saved to your account, and
+            other people using this app cannot see them. The person who runs the
+            app can see who has signed in and what the stories were about. You can
+            sign out from inside either app.</p>
     </section>
 </body>
 </html>
