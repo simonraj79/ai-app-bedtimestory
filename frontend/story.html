@@ -53,6 +53,10 @@
          an "average" of one story is that story, wearing a bigger word. -->
     <p id="history-summary" class="hist-summary" hidden></p>
     <ol id="history"><li class="empty">No stories yet.</li></ol>
+    <!-- The summary above only describes the ten stories this page fetched. This
+         is the way to everything. Hidden while signed out, because the page it
+         leads to would only 401. -->
+    <a id="mystats-link" class="mystats-link" href="mystats.html" hidden>See all your reading &rarr;</a>
 
     <script src="config.js"></script>
     <script>
@@ -367,6 +371,7 @@
         hintEl.hidden = true;
         buttonEl.hidden = true;
         btn.disabled = false;
+        $("mystats-link").hidden = false;
         loadHistory();
       },
       onSignOut: () => {
@@ -375,6 +380,7 @@
         hintEl.hidden = false;
         buttonEl.hidden = false;
         btn.disabled = true;
+        $("mystats-link").hidden = true;
         // The story on screen and the earlier ones belong to one family, so
         // they go when that person does.
         stopWriting();

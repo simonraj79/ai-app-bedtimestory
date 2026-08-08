@@ -61,6 +61,38 @@ class CurrentUser(BaseModel):
     name: str
 
 
+# --- One reader's own numbers ------------------------------------------------
+#
+# Deliberately a separate shape from the admin models below, even though the
+# questions overlap. The admin view answers "who is using this", which needs an
+# email on every row; this one answers "what have I made", where an email would
+# only ever be the reader's own. Sharing a model would mean every future admin
+# field had to be checked for whether it leaks.
+
+class MyGenre(BaseModel):
+    genre: str
+    stories: int
+
+
+class MyChild(BaseModel):
+    child_name: str
+    stories: int
+
+
+class MyStats(BaseModel):
+    stories: int
+    words: int
+    reading_seconds: int          # total, read aloud
+    avg_words: int | None = None  # None until at least one story is analysed
+    avg_grade: float | None = None
+    longest_words: int | None = None
+    first_story: str | None = None
+    last_story: str | None = None
+    unanalysed: int               # stories written before stats existed
+    genres: list[MyGenre]
+    children: list[MyChild]
+
+
 # --- Admin -------------------------------------------------------------------
 
 class UsageTotals(BaseModel):

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#131a2c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Your reading">
+    <title>Your reading — Bedtime Story</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<!-- body.bedtime, like story.html: this page is about the stories, and it is
+     reached from that page. admin.html is the plain palette because it is a
+     different job for a different person. -->
+<body class="bedtime">
+    <a class="back" href="story.html">&larr; Bedtime Story</a>
+    <h1>📖 Your reading</h1>
+
+    <div class="authbar">
+        <div id="g-signin"></div>
+        <span id="auth-hint" class="auth-hint">Sign in with Google to see your reading.</span>
+        <span id="auth-who" class="auth-who" hidden></span>
+        <button type="button" id="signout" class="signout" hidden>Sign out</button>
+    </div>
+
+    <div id="error" role="alert"></div>
+
+    <div id="mine" hidden>
+        <div class="stats" id="totals"></div>
+        <p id="span" class="hist-summary"></p>
+
+        <div id="children-section" hidden>
+            <h2>Who they were for</h2>
+            <ul class="tally" id="children"></ul>
+        </div>
+
+        <div id="genres-section" hidden>
+            <h2>What they were about</h2>
+            <ul class="tally" id="genres"></ul>
+        </div>
+
+        <p id="unanalysed" class="note" hidden></p>
+    </div>
+
+    <!-- Not an error state: a reader who has just signed in has made nothing yet,
+         and a page of zeros would read as a fault rather than a beginning. -->
+    <div id="empty" hidden>
+        <p class="lede">No stories yet.</p>
+        <p class="note">Once you have made a few, this is where the totals live —
+            how many words, how long they take to read aloud, who they were for,
+            and what they tended to be about.</p>
+        <a class="mystats-link" href="story.html">Make your first story &rarr;</a>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+    const $ = id => document.getElementById(id);
+    const errEl = $("error"), mineEl = $("mine"), emptyEl = $("empty");
+
+    // Everything below came out of the database, so everything goes through
+    // escapeHtml - counts included, for the same reason it is done on the other
+    // pages: a count is only a number until the day the query returns something
+    // else.
+    function render(d) {
+      if (!d.stories) {
+        mineEl.hidden = true;
+        emptyEl.hidden = false;
+        return;
+      }
+      emptyEl.hidden = true;
+
+      // readingTime handles the minutes; a total in seconds would make the
+      // reader do the division on the one number most likely to be large.
+      const tiles = [
+        [d.stories, d.stories === 1 ? "story" : "stories"],
+        [d.words.toLocaleString(), "words"],
+        [readingTime(d.reading_seconds), "read aloud"],
+      ];
+      if (d.avg_words !== null && d.avg_words !== undefined) {
+        tiles.push([d.avg_words, "words each"]);
+      }
+      $("totals").innerHTML = tiles.map(([n, k]) => `
+        <div class="stat">
+          <span class="n">${escapeHtml(String(n))}</span>
+          <span class="k">${escapeHtml(k)}</span>
+        </div>`).join("");
+
+      const bits = [];
+      if (d.first_story && d.last_story) {
+        bits.push(d.first_story === d.last_story
+          ? `All on ${escapeHtml(d.first_story)}`
+          : `From ${escapeHtml(d.first_story)} to ${escapeHtml(d.last_story)}`);
+      }
+      if (d.avg_grade !== null && d.avg_grade !== undefined) {
+        bits.push(`usually ${escapeHtml(readingBand(d.avg_grade))}`);
+      }
+      if (d.longest_words) bits.push(`longest ${escapeHtml(String(d.longest_words))} words`);
+      $("span").textContent = "";
+      $("span").innerHTML = bits.join(" · ");
+
+      const children = d.children || [];
+      $("children-section").hidden = !children.length;
+      $("children").innerHTML = children.map(c => `
+        <li><span class="k">${escapeHtml(c.child_name)}</span>
+            <span class="n">${escapeHtml(String(c.stories))}</span></li>`).join("");
+
+      // Genre comes from a keyword heuristic over the theme and the story, so it
+      // is a rough shape of what gets asked for rather than a taxonomy.
+      const genres = d.genres || [];
+      $("genres-section").hidden = !genres.length;
+      $("genres").innerHTML = genres.map(g => `
+        <li><span class="k">${escapeHtml(g.genre)}</span>
+            <span class="n">${escapeHtml(String(g.stories))}</span></li>`).join("");
+
+      // Say what is missing rather than quietly leaving it out of the averages.
+      const un = $("unanalysed");
+      un.hidden = !d.unanalysed;
+      if (d.unanalysed) {
+        un.textContent = d.unanalysed === 1
+          ? "1 older story was written before any of this was measured, so it is counted but not averaged."
+          : `${d.unanalysed} older stories were written before any of this was measured, so they are counted but not averaged.`;
+      }
+
+      mineEl.hidden = false;
+    }
+
+    async function load() {
+      const headers = authHeaders();
+      if (!headers) return;
+      errEl.textContent = "";
+      try {
+        const r = await fetch(`${BACKEND_URL}/me/stats`, {headers});
+        if (r.status === 401) return handleAuthExpired(errEl);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Request failed");
+        render(data);
+      } catch (e) {
+        errEl.textContent = e.message === "Failed to fetch"
+          ? "Cannot reach the server. If it was asleep, wait a moment and try again."
+          : e.message;
+      }
+    }
+
+    const hintEl = $("auth-hint"), whoEl = $("auth-who");
+    const signoutBtn = $("signout"), buttonEl = $("g-signin");
+
+    initGoogleAuth({
+      buttonEl,
+      onSignIn: user => {
+        whoEl.textContent = `Signed in as ${user.name || user.email}`;
+        whoEl.hidden = false;
+        signoutBtn.hidden = false;
+        hintEl.hidden = true;
+        buttonEl.hidden = true;
+        load();
+      },
+      onSignOut: () => {
+        whoEl.hidden = true;
+        signoutBtn.hidden = true;
+        hintEl.hidden = false;
+        buttonEl.hidden = false;
+        // These are one family's numbers; they go when that person does.
+        mineEl.hidden = true;
+        emptyEl.hidden = true;
+      },
+    });
+    signoutBtn.addEventListener("click", signOut);
+    </script>
+
+    <script src="https://accounts.google.com/gsi/client" async defer
+            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
+</body>
+</html>

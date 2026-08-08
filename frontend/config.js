@@ -73,6 +73,11 @@ function readingTime(seconds) {
   if (total < 60) return `${total} s`;
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
+  // Past ten minutes the seconds are noise and the string gets long enough to
+  // wrap a stat tile onto two lines, leaving it taller than the ones beside it.
+  // "1 min 18 s" is a story; "17 min" is a lifetime total, and nobody needs the
+  // 47 seconds.
+  if (total >= 600) return `${Math.round(total / 60)} min`;
   return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
 }
 

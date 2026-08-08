@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import get_conn
 from app.schemas import (
-    AskRequest, AskResponse, CurrentUser, Interaction,
+    AskRequest, AskResponse, CurrentUser, Interaction, MyStats,
     Story, StoryRequest, StoryResponse, UsageResponse,
 )
 from app.services.gemini_service import (
@@ -20,7 +20,7 @@ from app.services.gemini_service import (
 from app.services.admin_service import fetch_usage
 from app.services.auth_service import admin_user, current_user
 from app.services.chat_service import save_interaction, fetch_recent_history
-from app.services.story_service import save_story, fetch_recent_stories
+from app.services.story_service import save_story, fetch_recent_stories, fetch_my_stats
 
 # The frontend is deployed separately (Vercel), so the browser calls this API
 # cross-origin. Only these origins may do so.
@@ -79,6 +79,14 @@ def story(payload: StoryRequest, user: CurrentUser = Depends(current_user)):
 @app.get("/stories", response_model=list[Story])
 def stories(user: CurrentUser = Depends(current_user)):
     return fetch_recent_stories(user.id)
+
+
+# The reader's own numbers across everything they have made. /stories only ever
+# returns the last ten, so a total taken from it would quietly stop counting at
+# ten and look like the reader had stalled.
+@app.get("/me/stats", response_model=MyStats)
+def my_stats(user: CurrentUser = Depends(current_user)):
+    return fetch_my_stats(user.id)
 
 
 # --- Admin -------------------------------------------------------------------

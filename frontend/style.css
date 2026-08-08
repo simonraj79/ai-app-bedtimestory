@@ -564,6 +564,71 @@ body.bedtime #history .q {
     border-radius: 12px;
 }
 
+/* --- Your reading (mystats.html) ------------------------------------------ */
+
+/* The tiles were built for admin.html's cooler palette. Two classes (0,2,0)
+   beats the bare .stat (0,1,0), so this wins wherever it sits in the file. */
+body.bedtime .stat {
+    background: #1c2438;
+    border-color: #2a3450;
+}
+
+/* A label and a count on one row, the count pushed to the end so a column of
+   them lines up without a table. */
+.tally {
+    list-style: none;
+    margin: 0.6rem 0 0;
+    padding: 0;
+}
+
+.tally li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid #2a3450;
+}
+
+.tally li:last-child {
+    border-bottom: none;
+}
+
+.tally .k {
+    color: #e8e3d8;
+}
+
+.tally .n {
+    color: #8f9bb8;
+    font-variant-numeric: tabular-nums;
+}
+
+.note {
+    margin-top: 1.5rem;
+    font-size: 0.85rem;
+    color: #6d7488;
+}
+
+body.bedtime .note {
+    color: #7c88a5;
+}
+
+/* Given the tap-target height so it is comfortable one-handed, like .back. */
+.mystats-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    margin-top: 0.6rem;
+    color: #8f9bb8;
+    text-decoration: none;
+    font-size: 0.95rem;
+}
+
+.mystats-link:hover,
+.mystats-link:active {
+    color: #e5c98a;
+}
+
 .stat .n {
     display: block;
     font-size: 1.6rem;
