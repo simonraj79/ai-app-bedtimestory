@@ -577,6 +577,50 @@ Swap models with the `GEMINI_MODEL` env var; no code changes. Update it in
 **both** places — `.env` locally and the Render dashboard (or
 `PUT /v1/services/<id>/env-vars/GEMINI_MODEL`).
 
+### The real numbers are in AI Studio, not the docs
+
+`ai.google.dev/gemini-api/docs/rate-limits` does **not** print the free-tier RPD
+per model — it defers to <https://aistudio.google.com/rate-limit>. Read them
+there; do not quote a number from memory. Observed 8 Aug 2026:
+
+| Model | Category | RPM | TPM | RPD |
+|---|---|---|---|---|
+| Gemini 3.6 Flash | Text-out | 5 | 250K | **20** ← was at 23/20, over |
+| Gemini 3.1 Flash TTS | Multi-modal generative | 3 | **10K** | **10** |
+| **Gemini 3.5 Flash Lite** | Text-out | 15 | 250K | **500** |
+
+Two things worth keeping from that table. `gemini-3.6-flash` was **over its daily
+limit** at the time of reading, which is the decision above vindicated by data —
+though note the reason recorded here was *per minute* and the binding constraint
+turned out to be *per day*. And **quota is per category, not per account**: a
+"multi-modal generative" model gets its own much smaller budget, so headroom on
+the story model tells you nothing about headroom on anything else.
+
+## Text to speech was measured and rejected
+
+Asked for on 8 Aug 2026: have the app read the story aloud, on the assumption
+that TTS had "500/day too". It does not. `gemini-3.1-flash-tts-preview` works
+with the existing key — but it fails three ways at once, measured, not guessed:
+
+| | |
+|---|---|
+| **Quota** | **10 requests/day**, shared across every user of the app |
+| **Latency** | **69.9s** for a 209-word story (on top of 4–9s to write it) |
+| **Payload** | 4.73 MB raw PCM · 6.31 MB as base64 in JSON |
+
+Streaming would only have addressed the latency; the quota kills it regardless.
+It is a different endpoint too — `POST /v1beta/interactions` with
+`response_format: {type: audio}`, not `models/<m>:generateContent` — returning
+base64 PCM at 24kHz mono 16-bit that needs a WAV header adding.
+
+**Do not promise a voice the app does not have.** The sign-in hint said "hear a
+story" and now says "create and read a story", because nothing here speaks.
+
+One good thing came out of it: the TTS audio for that story ran **99 seconds**
+against the **96 seconds** `text_stats` predicted at 130 wpm — 3% out. That is
+independent confirmation the read-aloud rate is right; the silent-reading rate
+of ~230 wpm would have claimed 55s.
+
 ## A quota error is not an outage — do not report it as one
 
 Exceeding the quota returns **429**, which `raise_for_status()` collapses into a
