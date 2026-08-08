@@ -12,3 +12,13 @@ const LOCAL_HOSTS = ["localhost", "127.0.0.1"];
 const BACKEND_URL = LOCAL_HOSTS.includes(location.hostname)
   ? "http://localhost:8000"
   : "https://ai-app-bedtimestory.onrender.com";
+
+// Every page renders stored text through innerHTML, so this is the escape
+// boundary for anything that came out of the database. It lives here, not in
+// each page, because a duplicated escape gets fixed in the copy you happened to
+// be looking at.
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[c]));
+}

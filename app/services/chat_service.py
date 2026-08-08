@@ -25,12 +25,18 @@ def save_interaction(question: str, answer: str) -> None:
 
 
 def fetch_recent_history(limit: int = 10) -> list[Interaction]:
-    with get_conn() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT id, question, answer, model_name, "
-                "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at "
-                "FROM interactions ORDER BY id DESC LIMIT %s",
-                (limit,),
-            )
-            return [Interaction(**row) for row in cur.fetchall()]
+    try:
+        with get_conn() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT id, question, answer, model_name, "
+                    "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at "
+                    "FROM interactions ORDER BY id DESC LIMIT %s",
+                    (limit,),
+                )
+                return [Interaction(**row) for row in cur.fetchall()]
+    except psycopg.Error:
+        raise HTTPException(
+            status_code=502,
+            detail="Postgres is not reachable. Check your database connection."
+        )

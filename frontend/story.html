@@ -67,12 +67,6 @@
     let storySize = parseFloat(localStorage.getItem("storySize")) || 1.15;
     document.documentElement.style.setProperty("--story-size", storySize + "rem");
 
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
-      }[c]));
-    }
-
     // --- Suggestions: one tap beats inventing a theme at bedtime -------------
     $("chips").innerHTML = THEMES
       .map(t => `<button type="button" class="chip">${escapeHtml(t)}</button>`).join("");

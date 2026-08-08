@@ -25,12 +25,18 @@ def save_story(child_name: str, theme: str, story: str) -> None:
 
 
 def fetch_recent_stories(limit: int = 10) -> list[Story]:
-    with get_conn() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT id, child_name, theme, story, model_name, "
-                "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at "
-                "FROM stories ORDER BY id DESC LIMIT %s",
-                (limit,),
-            )
-            return [Story(**row) for row in cur.fetchall()]
+    try:
+        with get_conn() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT id, child_name, theme, story, model_name, "
+                    "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at "
+                    "FROM stories ORDER BY id DESC LIMIT %s",
+                    (limit,),
+                )
+                return [Story(**row) for row in cur.fetchall()]
+    except psycopg.Error:
+        raise HTTPException(
+            status_code=502,
+            detail="Postgres is not reachable. Check your database connection."
+        )

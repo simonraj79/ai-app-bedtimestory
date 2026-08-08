@@ -25,12 +25,6 @@
 
     <script src="config.js"></script>
     <script>
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
-      }[c]));
-    }
-
     function renderHistory(items) {
       const list = document.getElementById("history");
       if (!items || items.length === 0) {
