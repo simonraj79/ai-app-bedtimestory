@@ -16,7 +16,10 @@
 
     <div class="authbar">
         <div id="g-signin"></div>
-        <span id="auth-hint" class="auth-hint">Sign in with Google to hear a story.</span>
+        <!-- "create and read", not "hear": nothing here speaks. The app writes a
+             story and a grown-up reads it aloud, and promising a voice the app
+             does not have is the kind of small lie a tired reader notices. -->
+        <span id="auth-hint" class="auth-hint">Sign in with Google to create and read a story.</span>
         <span id="auth-who" class="auth-who" hidden></span>
         <button type="button" id="signout" class="signout" hidden>Sign out</button>
     </div>
