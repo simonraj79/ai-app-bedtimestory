@@ -13,3 +13,7 @@
 venv/
 __pycache__/
 *.pyc
+
+# Local working notes - not published. Contains account names and operational
+# detail that does not belong in a public repo.
+CLAUDE.md

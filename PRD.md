@@ -290,10 +290,10 @@ closed immediately after.
    either token any more.
 3. **Google sign-in** (milestone 15). The OAuth client lives in Google Cloud
    project `dsai-mod-2-group-project` (number `722888382160`), owned by
-   `simoraj@gmail.com` — **a different account from the machine's default Chrome
+   `<owner-account>` — **a different account from the machine's default Chrome
    profile**, which is the easiest confusing mistake available here. Two new env
    vars on Render, both `sync: false`: `GOOGLE_CLIENT_ID` (public — it also ships
-   in `frontend/config.js`) and `ADMIN_EMAIL` (`simoraj@gmail.com`; private, not
+   in `frontend/config.js`) and `ADMIN_EMAIL` (`<owner-account>`; private, not
    a credential).
 
    **Production migrated 8 Aug 2026**: `users` created, nullable `user_id` added
