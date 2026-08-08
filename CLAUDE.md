@@ -986,9 +986,75 @@ all error paths still pass.
 
 # Reading the tracking data
 
+**The admin panel is <https://ai-app-bedtimestory.vercel.app/admin.html>.** It is
+deliberately not linked from the hub — bookmark it. Anyone else who finds the URL
+gets a `403`, because the gate is `ADMIN_EMAIL` on the server, not the absence of
+a link.
+
+## Counting sign-ins: why `last_seen_at` was not enough
+
+`users.last_seen_at` answers *"when was this person last here"*. It cannot answer
+*"how many times"* or *"how many people were about on Tuesday"* — it is a single
+column that gets **overwritten**. Those are questions about events, and a state
+cannot answer them however often you update it.
+
+Hence `sign_ins`. The trap in filling it is that the auth dependency runs on
+**every authenticated request**, so writing a row there logs requests, not
+sign-ins: opening the story page and generating once would look like several.
+
+`token_iat` is the ID token's `iat` claim — fixed for the life of a token, and
+different only when Google issues a new one, which is exactly what a sign-in is.
+`UNIQUE (user_id, token_iat)` + `ON CONFLICT DO NOTHING` then does the counting,
+so the call site never has to work out which of its requests is the first.
+
+Proven rather than assumed: 50 inserts with one token produce **1** row; a new
+token produces a 2nd.
+
+## `generate_series`, not `GROUP BY`, for a daily chart
+
+A day with no activity has **no rows to group**, so `GROUP BY day` silently omits
+it and a 14-day chart draws a misleadingly continuous line over a quiet week.
+Generate the days first and count into them:
+
+```sql
+WITH days AS (
+  SELECT generate_series(current_date - interval '13 days', current_date, interval '1 day')::date AS day
+)
+SELECT d.day,
+       (SELECT count(*) FROM sign_ins g WHERE g.created_at::date = d.day) AS sign_ins
+FROM days d ORDER BY d.day;
+```
+
+The same instinct as *"silence is not success"*: an absent row and a zero look
+identical in a chart, and only one of them is the truth.
+
+## The queries
+
 `/admin/usage` renders the headline numbers. These are the queries behind them,
 for when you want the shape rather than the summary. Run them against the local
 container, or against production through a temporarily opened `/32`.
+
+```sql
+-- Who has signed in, how often, and when they were last about.
+SELECT u.email, u.name,
+       count(g.id)                                        AS sign_ins,
+       to_char(min(g.created_at), 'YYYY-MM-DD HH24:MI')   AS first_sign_in,
+       to_char(u.last_seen_at,    'YYYY-MM-DD HH24:MI')   AS last_seen
+FROM users u LEFT JOIN sign_ins g ON g.user_id = u.id
+GROUP BY u.id, u.email, u.name, u.last_seen_at
+ORDER BY sign_ins DESC;
+
+-- Sign-ins per day, quiet days included.
+SELECT d.day, count(g.id) AS sign_ins
+FROM (SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day) d
+LEFT JOIN sign_ins g ON g.created_at::date = d.day
+GROUP BY d.day ORDER BY d.day;
+
+-- Came back, or signed in once and never returned?
+SELECT count(*) FILTER (WHERE n = 1) AS one_and_done,
+       count(*) FILTER (WHERE n > 1) AS returned
+FROM (SELECT user_id, count(*) AS n FROM sign_ins GROUP BY user_id) s;
+```
 
 ```sql
 -- 1. Signups over time. One row per person, ever.
