@@ -1,7 +1,15 @@
 # PRD — AI Apps
 
-**Status:** V1 built and verified locally; deploy in progress · **Last updated:** 8 August 2026
+**Status:** ✅ **V1 shipped — live in production** · **Last updated:** 8 August 2026
 **Owner:** Simon · **Related:** `CLAUDE.md` (conventions, insights, gotchas), `README.md` (how to run)
+
+| | URL |
+|---|---|
+| **Frontend** | <https://ai-app-bedtimestory.vercel.app> |
+| **Backend** | <https://ai-app-bedtimestory.onrender.com> |
+
+⚠️ Free Postgres **expires 2026-09-07**. ⚠️ Vercel auto-deploy not yet wired —
+`git push` redeploys the backend only.
 
 ---
 
@@ -13,8 +21,8 @@ architecture pointed at a narrower job.
 
 | # | App | Page | Endpoint | Table | Status |
 |---|---|---|---|---|---|
-| 1 | 💬 Chat | `chat.html` | `POST /ask` | `interactions` | ✅ Built, in real use |
-| 2 | 🌙 Bedtime Story | `story.html` | `POST /story` | `stories` | ✅ Built |
+| 1 | 💬 Chat | `chat.html` | `POST /ask` | `interactions` | ✅ **Live** |
+| 2 | 🌙 Bedtime Story | `story.html` | `POST /story` | `stories` | ✅ **Live** |
 
 ## 2. Problem
 
@@ -124,8 +132,8 @@ came from which, and whether quality moved.
 
 | Requirement | Target | Actual |
 |---|---|---|
-| Chat latency | < 5s | ~2.5s |
-| Story latency | < 15s | ~6–8s |
+| Chat latency | < 5s | ~2.5s local · **4.0s in production** |
+| Story latency | < 15s | ~6–8s local · ~9s in production |
 | Story length | 150–250 words | ~185 |
 | Child-safe output | Always | Enforced by system prompt |
 | Cost | Negligible | Free tier; hidden thinking tokens dominate |
@@ -153,31 +161,45 @@ on 8 Aug 2026. **These are scope choices, not capability limits.**
 
 ## 9. Deployment
 
-### Ready ✅
+### Shipped ✅ — 8 August 2026
 
-- `render.yaml` — web service + free Postgres, `healthCheckPath: /healthz`,
-  `GEMINI_API_KEY` and `FRONTEND_ORIGINS` as `sync: false`, `DATABASE_URL` via
-  `fromDatabase` — so the committed blueprint holds **zero secrets**
-- `Procfile`, `vercel.json`, `.vercelignore`, `.python-version` (3.13)
-- Start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT` tested locally
-- Code pushed to `simonraj79/ai-app-bedtimestory` (private), zero secrets
-- Render token verified (owner `tea-csps46i3esus73eojjp0`)
-- Vercel token verified; project `ai-app-bedtimestory`
-  (`prj_IRlDJCZYjQNittWSAbm8cKJWle2O`) created under `simon-rajs-projects`
+| Resource | Value |
+|---|---|
+| Render web service | `srv-d9ra32qfngtc73ctjudg` · free · singapore · auto-deploy on `master` |
+| Render Postgres | `dpg-d9ra1q2fngtc73ctho80-a` · free · singapore · PG **16.14** |
+| Vercel project | `prj_IRlDJCZYjQNittWSAbm8cKJWle2O` · production alias `ai-app-bedtimestory.vercel.app` |
+| GitHub | `simonraj79/ai-app-bedtimestory` (private), zero secrets committed |
+
+Both migrations applied; `GEMINI_API_KEY`, `GEMINI_MODEL`, `DATABASE_URL` and
+`FRONTEND_ORIGINS` set on Render; health check `/healthz` →
+`{"gemini":true,"postgres":true}`.
+
+**Verified through a real browser**, not just curl: hub loads with no error
+banner, Chat answered and persisted, Bedtime Story produced 179 correctly-toned
+words and persisted, production CORS allows the Vercel origin (`200`) and refuses
+others (`400`).
+
+**The database has no public surface.** `DATABASE_URL` is Render's *internal*
+connection string; `ipAllowList` is `[]`, so nothing outside Render's private
+network can reach it. It was opened to a single `/32` for the migration and
+closed immediately after.
 
 ### Remaining ⬜
 
-1. Grant Vercel's GitHub App access to the private repo, then link it
-2. Render Blueprint deploy; set `GEMINI_API_KEY`; apply both migrations
-3. Set `BACKEND_URL` in `frontend/config.js` → commit → push
-4. Deploy Vercel; set `FRONTEND_ORIGINS` on Render to the Vercel URL
-5. Revoke both deploy tokens
+1. **Link Vercel to GitHub** — its GitHub App cannot see the private repo, so the
+   frontend was uploaded directly via the API. Until linked, `git push`
+   redeploys the **backend only** and the frontend can silently drift.
+   Fix: <https://github.com/settings/installations> → Vercel → Configure → add
+   the repo. (Or make the repo public — decision #7.)
+2. **Revoke both deploy tokens.** No longer needed; the Render one was exposed
+   during setup.
 
-**Known free-tier constraints:**
+**Live free-tier constraints:**
 
-- Render Postgres **expires 30 days after creation** — create at deploy time
-- Render web services **sleep after 15 minutes** idle; first request 30–60s
-- Render Blueprints read `render.yaml` from a **pushed, accessible** repo
+- Postgres **expires 2026-09-07**. `/healthz` will flip to `postgres: false`.
+- The web service **sleeps after 15 minutes** idle; the next request takes
+  30–60s. The frontend is on a CDN, so the *page* still loads instantly — only
+  the first API call waits.
 
 ## 10. Milestones
 
@@ -192,11 +214,13 @@ on 8 Aug 2026. **These are scope choices, not capability limits.**
 | 7 | Split into backend + `frontend/`, CORS verified | ✅ |
 | 8 | Committed and pushed to GitHub, zero secrets | ✅ |
 | 9 | Vercel project created | ✅ |
-| 10 | Vercel ↔ GitHub link | ⬜ needs repo access |
-| 11 | Render deploy + migrations | ⬜ starts the 30-day clock |
-| 12 | Two-pass URL wiring, live end to end | ⬜ |
-| 13 | Child profiles | ⬜ decision #2 |
-| 14 | Narration and/or illustrations | ⬜ decision #1 |
+| 10 | Render deploy: service + Postgres + migrations | ✅ |
+| 11 | Vercel deploy (direct upload) | ✅ |
+| 12 | Two-pass URL wiring, verified live in a browser | ✅ |
+| 13 | Vercel ↔ GitHub link (push-to-deploy both halves) | ⬜ needs repo access |
+| 14 | Revoke deploy tokens | ⬜ |
+| 15 | Child profiles | ⬜ decision #2 |
+| 16 | Narration and/or illustrations | ⬜ decision #1 |
 
 ## 11. Known limits — by design, not defects
 
@@ -215,14 +239,21 @@ on 8 Aug 2026. **These are scope choices, not capability limits.**
 |---|---|
 | Model produces something unsuitable for a child | System prompt constrains it; every story is stored and inspectable. Images would need a separate check. |
 | Stale facts presented confidently | Documented in §11. Grounding is decision #4. |
-| Free Postgres expires mid-use | 30-day clock starts at creation. Note the date; `/healthz` shows `postgres: false`. |
-| Cold start makes it feel broken at bedtime | Free tier sleeps after 15 min. The frontend is on a CDN so the *page* loads instantly; the first API call waits 30–60s. |
-| Open API abuse | CORS is not a control here. Single-household use makes it low risk, but the endpoint is public once deployed. |
+| **Postgres dies 2026-09-07** | Hard date, now live. `/healthz` shows `postgres: false` when it happens. Migrate to a paid tier or recreate before then. Diarise it. |
+| **Frontend silently drifts from backend** | Vercel is not linked to Git, so `git push` updates only the backend. Any frontend change needs a manual upload until milestone 13. This is the most likely near-term footgun. |
+| Cold start makes it feel broken at bedtime | Free tier sleeps after 15 min. The frontend is on a CDN so the *page* loads instantly; the first API call waits 30–60s. `index.html` surfaces this rather than failing silently. |
+| Open API abuse | CORS is not a control — `curl` ignores it. The endpoint is public now that it is deployed. Single-household use makes it low risk; if that changes, it needs real auth. |
+| Model produces something unsuitable | Every story is stored and inspectable. Images would need a separate check. |
 | Gemini free-tier rate limits | Single-household use is far below them. |
-| API key leaks | Three secret files, all gitignored and verified. The Render key was exposed once and rotated. **Revoke both deploy tokens after deploying.** |
+| API key leaks | Three secret files, all gitignored, verified with `git check-ignore` and a shape-based scan. The Render key was exposed once and rotated. **Both deploy tokens still live — revoke them (milestone 14).** |
 | Divergence from the cohort's pins | Accepted in decision #5. If stuck, temporarily install the course's versions to reproduce a classmate's error. |
 
-## 13. Immediate next step
+## 13. Immediate next steps
 
-Milestone 10 — grant Vercel access to the private repo (or make it public), then
-Render (milestone 11) and the two-pass wiring.
+1. **Revoke both deploy tokens** (milestone 14) — nothing needs them now.
+2. **Link Vercel to GitHub** (milestone 13) — one click, then push-to-deploy
+   works on both halves and risk #2 disappears.
+3. Diarise **7 September 2026**.
+
+After that, V1 is genuinely done and the next real work is decision #2 (child
+profiles) — the highest value-per-effort improvement remaining.
