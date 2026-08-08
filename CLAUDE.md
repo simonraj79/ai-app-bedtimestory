@@ -654,6 +654,62 @@ The general lesson, and the reason this is here rather than in a commit message:
 **the GIS API surface is moving.** Check the live reference; do not write it from
 memory.
 
+## One Tap is a prompt, not a sign-in — and it looked like being asked twice
+
+`google.accounts.id.prompt()` ran on every page load. Dismissing or ignoring the
+One Tap card leaves you **signed out**, so the next page raised it again — read
+by anyone using it as "why is it asking me to sign in a second time?". Next to
+the always-rendered button it also put two ways to sign in on one screen.
+
+One Tap is the fragile half of GIS: it needs FedCM, third-party cookie
+permission, and no content blocker in the way. That is exactly why it worked on
+some machines and silently did nothing on others. **The rendered button depends
+on none of that.** `prompt()` is gone, and `auto_select` with it — that flag only
+ever applied to One Tap, so keeping it would have been a no-op.
+
+Sign-in also no longer appears on the hub at all. `index.html` calls exactly one
+endpoint, `/healthz`, which is unauthenticated — so the bar there bought nothing
+and cost a whole extra prompt. **Put sign-in where the authenticated call is.**
+
+### The personalised button is one control, not a second prompt
+
+With an active Google session, `renderButton` draws a **personalised** button —
+the account's name and email inside the same iframe. It looks like a "sign in
+as ..." card, which is easy to mistake for a One Tap overlay that never went
+away. Settle it by measuring, not by looking:
+
+```js
+[...document.querySelectorAll('div')].filter(d => /credential_picker|onetap/i.test(d.id))  // [] = no overlay
+document.getElementById('g-signin').querySelectorAll('iframe').length                      // 1 = one control
+```
+
+### Don't grep for a call in text that also documents it
+
+Two checks disagreed with reality in opposite directions here. `grep "id.prompt()"`
+matched the **comment** explaining why the call was removed, and the in-page
+equivalent inherited the same flaw because `Function.prototype.toString()`
+preserves comments. Strip comments before asserting:
+
+```js
+const src = fn.toString().replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+/id\.prompt\s*\(/.test(src)   // the honest answer
+```
+
+Same family as the `AQ\.A`/`rnd_` scanner that flagged this very file: **match the
+parsed thing, not text that happens to contain the words.**
+
+## The Google account chooser cannot be driven by browser automation
+
+Clicking the rendered button opens Google's chooser in a **separate window**,
+outside the extension's tab group — three attempts, no popup reachable. So the
+final click-through is the one step that has to be done by hand.
+
+Everything either side of it *is* automatable, and worth doing rather than
+skipping the test entirely: feed `handleGoogleCredential` a synthetic credential
+to prove storage → UI flip → button enable, then let the backend reject it to
+prove the 401 path clears the token, restores the button, and leaves the generate
+button **disabled** rather than live and useless.
+
 ## Consumer OAuth client IDs cannot be listed from a terminal — at all
 
 There is **no API and no gcloud command** that enumerates consumer OAuth 2.0
