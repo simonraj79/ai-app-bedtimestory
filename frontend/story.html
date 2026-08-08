@@ -20,6 +20,13 @@
              story and a grown-up reads it aloud, and promising a voice the app
              does not have is the kind of small lie a tired reader notices. -->
         <span id="auth-hint" class="auth-hint">Sign in with Google to create and read a story.</span>
+        <!-- In the auth bar, not under the history: it is one person's own
+             numbers, so it belongs beside their name. Below the history it sat
+             after ten collapsed stories - off the bottom of a phone, and styled
+             so quietly that nobody found it.
+             First in the bar, not last: at 358px the bar wraps to three rows,
+             and whichever item is last starts the page below two others. -->
+        <a id="mystats-link" class="mystats-link" href="mystats.html" hidden>📖 Your story stats</a>
         <span id="auth-who" class="auth-who" hidden></span>
         <button type="button" id="signout" class="signout" hidden>Sign out</button>
     </div>
@@ -53,10 +60,6 @@
          an "average" of one story is that story, wearing a bigger word. -->
     <p id="history-summary" class="hist-summary" hidden></p>
     <ol id="history"><li class="empty">No stories yet.</li></ol>
-    <!-- The summary above only describes the ten stories this page fetched. This
-         is the way to everything. Hidden while signed out, because the page it
-         leads to would only 401. -->
-    <a id="mystats-link" class="mystats-link" href="mystats.html" hidden>See all your reading &rarr;</a>
 
     <script src="config.js"></script>
     <script>

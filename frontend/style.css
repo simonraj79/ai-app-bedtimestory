@@ -564,7 +564,7 @@ body.bedtime #history .q {
     border-radius: 12px;
 }
 
-/* --- Your reading (mystats.html) ------------------------------------------ */
+/* --- Your story stats (mystats.html) -------------------------------------- */
 
 /* The tiles were built for admin.html's cooler palette. Two classes (0,2,0)
    beats the bare .stat (0,1,0), so this wins wherever it sits in the file. */
@@ -613,20 +613,41 @@ body.bedtime .note {
     color: #7c88a5;
 }
 
-/* Given the tap-target height so it is comfortable one-handed, like .back. */
+/* A bordered pill, not a text link. As a plain link in muted grey it read as a
+   footnote and went unnoticed; it is a feature, so it gets a control's outline
+   and the gold the rest of the bedtime palette uses for "this one matters".
+   Two classes (0,2,0) so it wins wherever it sits in the file. */
+.authbar .mystats-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: var(--tap);
+    padding: 0.45rem 0.9rem;
+    font-size: 0.9rem;
+    color: #e5c98a;
+    text-decoration: none;
+    border: 1px solid #4a4230;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.authbar .mystats-link:hover,
+.authbar .mystats-link:active {
+    color: #131a2c;
+    background: #e5c98a;
+    border-color: #e5c98a;
+}
+
+/* Used on mystats.html's empty state, outside any auth bar, where it is the one
+   thing to do next. */
 .mystats-link {
     display: inline-flex;
     align-items: center;
     min-height: var(--tap);
     margin-top: 0.6rem;
-    color: #8f9bb8;
+    color: #e5c98a;
     text-decoration: none;
     font-size: 0.95rem;
-}
-
-.mystats-link:hover,
-.mystats-link:active {
-    color: #e5c98a;
 }
 
 .stat .n {

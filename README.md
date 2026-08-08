@@ -7,7 +7,7 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 |---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | Ask a question, get a short answer. Every exchange is saved. |
 | 2 | 🌙 Bedtime Story | `story.html` | A gentle ~200-word story built around a child's name and a theme. |
-| 📖 | Your reading | `mystats.html` | Your own totals — words, read-aloud time, reading level, who each story was for. Linked from the story page. |
+| 📖 | Your story stats | `mystats.html` | Your own totals — words, read-aloud time, reading level, who each story was for. |
 | 📊 | Usage | `admin.html` | Owner-only: who signed in, how often, and what they made. Not linked from the hub. |
 
 **Single-turn** means one request in, one answer out. The model never sees
@@ -28,7 +28,7 @@ short *How it works* instead.
 | **App** | <https://ai-app-bedtimestory.vercel.app> |
 | **API** | <https://ai-app-bedtimestory.onrender.com> |
 | Health | <https://ai-app-bedtimestory.onrender.com/healthz> |
-| Your reading | <https://ai-app-bedtimestory.vercel.app/mystats.html> |
+| Your story stats | <https://ai-app-bedtimestory.vercel.app/mystats.html> |
 | Usage (owner only) | <https://ai-app-bedtimestory.vercel.app/admin.html> |
 
 `git push origin master` deploys both halves — Render rebuilds the backend,
@@ -194,7 +194,8 @@ Data survives `docker stop`/`start`; lost only on `docker rm`.
 Two views. Both need a signed-in caller; each shows only what that caller is
 entitled to see.
 
-**Your reading** — `mystats.html`, linked from the story page. Anyone signed in
+**Your story stats** — `mystats.html`. Reached from a card on the hub and from
+the auth bar on the story page. Anyone signed in
 gets their own totals: stories, words, read-aloud time, average length and
 reading level, who each story was for, and what they were about.
 
