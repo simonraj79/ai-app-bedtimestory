@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bedtime Story — AI Apps</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#131a2c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Bedtime">
+    <title>Bedtime Story</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bedtime">
@@ -11,82 +15,214 @@
     <h1>🌙 Bedtime Story</h1>
 
     <label for="child-name">Who is the story for?</label>
-    <input id="child-name" type="text" placeholder="Maya">
+    <input id="child-name" type="text" placeholder="Maya"
+           autocapitalize="words" autocorrect="off" spellcheck="false"
+           enterkeyhint="next" autocomplete="off">
 
     <label for="theme">What should it be about?</label>
-    <input id="theme" type="text" placeholder="a sleepy dragon who lost his slippers">
+    <input id="theme" type="text" placeholder="a sleepy dragon who lost his slippers"
+           enterkeyhint="go" autocomplete="off">
+    <div class="chips" id="chips"></div>
 
-    <button id="tell-btn">Tell me a story</button>
+    <label for="length-group">How long?</label>
+    <div class="segmented" id="length-group" role="group" aria-label="Story length">
+        <button type="button" data-length="short"  aria-pressed="false">Short</button>
+        <button type="button" data-length="medium" aria-pressed="true">Just right</button>
+        <button type="button" data-length="long"   aria-pressed="false">Longer</button>
+    </div>
 
-    <div id="answer"></div>
-    <div id="error"></div>
+    <button id="tell-btn" class="primary">Tell me a story</button>
+
+    <div id="answer" aria-live="polite"></div>
+    <div id="error" role="alert"></div>
 
     <h2>Earlier stories</h2>
-    <ol id="history">No stories yet.</ol>
+    <ol id="history"><li class="empty">No stories yet.</li></ol>
 
     <script src="config.js"></script>
     <script>
+    const THEMES = [
+      "a sleepy dragon who lost his slippers",
+      "a little turtle carrying a lantern",
+      "a cloud that collects lost balloons",
+      "a fox who tucks in the forest",
+      "a star that came down to say goodnight",
+      "a rabbit with a very soft blanket",
+      "a whale singing the moon to sleep",
+      "a train that only runs at bedtime",
+    ];
+
+    const WRITING_LINES = [
+      "Dimming the lights",
+      "Finding the right words",
+      "Tucking everyone in",
+      "Almost ready",
+    ];
+
+    const $ = id => document.getElementById(id);
+    const nameEl = $("child-name"), themeEl = $("theme");
+    const btn = $("tell-btn"), ansEl = $("answer"), errEl = $("error");
+
+    let length = localStorage.getItem("length") || "medium";
+    let storySize = parseFloat(localStorage.getItem("storySize")) || 1.15;
+    document.documentElement.style.setProperty("--story-size", storySize + "rem");
+
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, c => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
       }[c]));
     }
 
+    // --- Suggestions: one tap beats inventing a theme at bedtime -------------
+    $("chips").innerHTML = THEMES
+      .map(t => `<button type="button" class="chip">${escapeHtml(t)}</button>`).join("");
+    $("chips").addEventListener("click", e => {
+      const chip = e.target.closest(".chip");
+      if (chip) { themeEl.value = chip.textContent; errEl.textContent = ""; }
+    });
+
+    // --- Length -------------------------------------------------------------
+    function paintLength() {
+      for (const b of $("length-group").children) {
+        b.setAttribute("aria-pressed", String(b.dataset.length === length));
+      }
+    }
+    $("length-group").addEventListener("click", e => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      length = b.dataset.length;
+      localStorage.setItem("length", length);
+      paintLength();
+    });
+    paintLength();
+
+    // --- Remember the child's name so it isn't retyped every night ----------
+    nameEl.value = localStorage.getItem("childName") || "";
+    nameEl.addEventListener("change", () =>
+      localStorage.setItem("childName", nameEl.value.trim()));
+
+    // Enter submits, which is what the phone keyboard's Go key implies.
+    for (const el of [nameEl, themeEl]) {
+      el.addEventListener("keydown", e => { if (e.key === "Enter") tell(); });
+    }
+
+    // --- History: collapsed, or ten full stories bury the page --------------
     function renderHistory(items) {
-      const list = document.getElementById("history");
-      if (!items || items.length === 0) {
-        list.innerHTML = "<li>No stories yet.</li>";
+      const list = $("history");
+      if (!items || !items.length) {
+        list.innerHTML = '<li class="empty">No stories yet.</li>';
         return;
       }
-      list.innerHTML = items.map(it =>
-        `<li>
-           <div class="q">${escapeHtml(it.child_name)} — ${escapeHtml(it.theme)}</div>
-           <div class="a">${escapeHtml(it.story)}</div>
-           <div class="meta">${it.model_name} · ${it.created_at}</div>
-         </li>`
-      ).join("");
+      list.innerHTML = items.map(it => `
+        <li><details>
+          <summary>
+            <span class="q">${escapeHtml(it.child_name)} — ${escapeHtml(it.theme)}</span>
+            <span class="meta">${escapeHtml(it.created_at)}</span>
+          </summary>
+          <div class="a">${escapeHtml(it.story)}</div>
+        </details></li>`).join("");
     }
 
     async function loadHistory() {
       try {
         const r = await fetch(`${BACKEND_URL}/stories`);
         if (r.ok) renderHistory(await r.json());
-      } catch (e) {
-        document.getElementById("error").textContent =
-          `Cannot reach the backend at ${BACKEND_URL}.`;
+      } catch {
+        errEl.textContent = `Cannot reach the backend at ${BACKEND_URL}.`;
       }
     }
 
-    document.getElementById("tell-btn").addEventListener("click", async () => {
-      const btn = document.getElementById("tell-btn");
-      const errEl = document.getElementById("error");
-      const ansEl = document.getElementById("answer");
+    // --- Waiting: a silent 8 seconds reads as a hang ------------------------
+    let writingTimers = [];
+    function startWriting() {
+      let i = 0;
+      ansEl.innerHTML =
+        `<div class="writing"><span id="wline">${WRITING_LINES[0]}</span>` +
+        `<span class="dots"></span><span class="slow" id="wslow"></span></div>`;
+      writingTimers.push(setInterval(() => {
+        i = (i + 1) % WRITING_LINES.length;
+        const el = $("wline"); if (el) el.textContent = WRITING_LINES[i];
+      }, 3000));
+      // Render's free tier sleeps; say so rather than let it look broken.
+      writingTimers.push(setTimeout(() => {
+        const el = $("wslow");
+        if (el) el.textContent = "The server was asleep — this first one can take up to a minute.";
+      }, 12000));
+    }
+    function stopWriting() {
+      writingTimers.forEach(t => { clearInterval(t); clearTimeout(t); });
+      writingTimers = [];
+    }
+
+    function renderStory(text) {
+      const paras = text.trim().split(/\n\s*\n/)
+        .map(p => `<p>${escapeHtml(p.trim())}</p>`).join("");
+      ansEl.innerHTML =
+        `<div class="story" id="story">${paras}</div>
+         <div class="story-tools">
+           <button type="button" id="smaller" aria-label="Smaller text">A−</button>
+           <button type="button" id="bigger"  aria-label="Bigger text">A+</button>
+           <button type="button" id="copy">Copy</button>
+           <button type="button" id="again">Another story</button>
+         </div>`;
+
+      const setSize = d => {
+        storySize = Math.min(1.7, Math.max(0.95, storySize + d));
+        localStorage.setItem("storySize", storySize);
+        document.documentElement.style.setProperty("--story-size", storySize + "rem");
+      };
+      $("bigger").onclick = () => setSize(0.1);
+      $("smaller").onclick = () => setSize(-0.1);
+      $("again").onclick = () => tell();
+      $("copy").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          $("copy").textContent = "Copied";
+          setTimeout(() => { const c = $("copy"); if (c) c.textContent = "Copy"; }, 1500);
+        } catch { $("copy").textContent = "Press and hold to copy"; }
+      };
+
+      // On a phone the story lands below the fold; take them to it.
+      $("story").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function tell() {
+      const child_name = nameEl.value.trim();
+      const theme = themeEl.value.trim();
       errEl.textContent = "";
-      ansEl.textContent = "Once upon a time…";
+
+      // Validate here rather than after a round trip.
+      if (!child_name) { errEl.textContent = "Who is the story for?"; nameEl.focus(); return; }
+      if (!theme) { errEl.textContent = "Pick a suggestion, or type what it should be about."; themeEl.focus(); return; }
+
+      localStorage.setItem("childName", child_name);
       btn.disabled = true;
+      btn.textContent = "Writing…";
+      startWriting();
       try {
         const r = await fetch(`${BACKEND_URL}/story`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            child_name: document.getElementById("child-name").value,
-            theme: document.getElementById("theme").value,
-          }),
+          body: JSON.stringify({ child_name, theme, length }),
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data.detail || "Request failed");
-        ansEl.textContent = data.story;
+        stopWriting();
+        renderStory(data.story);
         renderHistory(data.history);
       } catch (e) {
+        stopWriting();
         ansEl.textContent = "";
         errEl.textContent = e.message === "Failed to fetch"
-          ? `Cannot reach the backend at ${BACKEND_URL}. Check it is running and that this origin is allowed by CORS.`
+          ? `Cannot reach the story server. If it was asleep, wait a moment and try again.`
           : e.message;
       } finally {
         btn.disabled = false;
+        btn.textContent = "Tell me a story";
       }
-    });
+    }
 
+    btn.addEventListener("click", tell);
     loadHistory();
     </script>
 </body>

@@ -66,7 +66,7 @@ def story(payload: StoryRequest):
         raise HTTPException(status_code=400, detail="Please enter the child's name.")
     if not theme:
         raise HTTPException(status_code=400, detail="Please say what the story is about.")
-    text = generate_story(child_name, theme)
+    text = generate_story(child_name, theme, payload.length)
     save_story(child_name, theme, text)
     return StoryResponse(story=text, history=fetch_recent_stories())
 

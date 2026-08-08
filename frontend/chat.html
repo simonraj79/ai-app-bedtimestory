@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#14161c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Chat">
     <title>Chat — AI Apps</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -10,14 +14,14 @@
     <a class="back" href="index.html">&larr; All apps</a>
     <h1>💬 Chat</h1>
 
-    <textarea id="question" rows="3" placeholder="Ask a question…"></textarea>
-    <button id="ask-btn">Ask</button>
+    <textarea id="question" rows="3" placeholder="Ask a question…" enterkeyhint="send"></textarea>
+    <button id="ask-btn" class="primary">Ask</button>
 
-    <div id="answer"></div>
-    <div id="error"></div>
+    <div id="answer" aria-live="polite"></div>
+    <div id="error" role="alert"></div>
 
     <h2>Recent</h2>
-    <ol id="history">No questions yet.</ol>
+    <ol id="history"><li class="empty">No questions yet.</li></ol>
 
     <script src="config.js"></script>
     <script>
@@ -30,16 +34,17 @@
     function renderHistory(items) {
       const list = document.getElementById("history");
       if (!items || items.length === 0) {
-        list.innerHTML = "<li>No questions yet.</li>";
+        list.innerHTML = '<li class="empty">No questions yet.</li>';
         return;
       }
-      list.innerHTML = items.map(it =>
-        `<li>
-           <div class="q">${escapeHtml(it.question)}</div>
-           <div class="a">${escapeHtml(it.answer)}</div>
-           <div class="meta">${it.model_name} · ${it.created_at}</div>
-         </li>`
-      ).join("");
+      list.innerHTML = items.map(it => `
+        <li><details>
+          <summary>
+            <span class="q">${escapeHtml(it.question)}</span>
+            <span class="meta">${escapeHtml(it.created_at)}</span>
+          </summary>
+          <div class="a">${escapeHtml(it.answer)}</div>
+        </details></li>`).join("");
     }
 
     async function loadHistory() {

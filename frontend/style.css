@@ -1,8 +1,24 @@
+:root {
+    --tap: 2.75rem;              /* 44px - minimum comfortable tap target */
+    --story-size: 1.15rem;       /* overridden by the A/A+ toggle */
+}
+
+* {
+    -webkit-tap-highlight-color: transparent;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;   /* stop iOS resizing text in landscape */
+}
+
 body {
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     max-width: 42rem;
-    margin: 2rem auto;
-    padding: 0 1rem 4rem;
+    margin: 0 auto;
+    /* Safe-area insets keep content clear of the notch and home indicator. */
+    padding:
+        calc(1.5rem + env(safe-area-inset-top)) calc(1rem + env(safe-area-inset-right))
+        calc(4rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
     background: #14161c;
     color: #e6e8ee;
     line-height: 1.6;
@@ -19,6 +35,7 @@ body.bedtime {
 h1 {
     font-size: 1.6rem;
     font-weight: 600;
+    margin: 0.2rem 0 0;
 }
 
 body.bedtime h1 {
@@ -42,15 +59,16 @@ body.bedtime h2 {
 
 .lede {
     color: #8b93a7;
-    margin-top: -0.5rem;
+    margin-top: 0.3rem;
 }
 
 .back {
-    display: inline-block;
-    margin-bottom: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
     color: #8b93a7;
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
 }
 
 .back:hover {
@@ -71,18 +89,19 @@ body.bedtime h2 {
     padding: 1.3rem;
     background: #1c1f28;
     border: 1px solid #262a35;
-    border-radius: 10px;
+    border-radius: 12px;
     text-decoration: none;
     color: inherit;
 }
 
-.app-card:hover {
+.app-card:hover,
+.app-card:active {
     border-color: #4f7cf7;
 }
 
 .app-card .icon {
     display: block;
-    font-size: 1.6rem;
+    font-size: 1.7rem;
 }
 
 .app-card .name {
@@ -93,32 +112,45 @@ body.bedtime h2 {
 
 .app-card .desc {
     display: block;
-    font-size: 0.87rem;
+    font-size: 0.9rem;
     color: #8b93a7;
     margin-top: 0.3rem;
+}
+
+.status {
+    margin-top: 1.5rem;
+    color: #ffcf8b;
+    font-size: 0.9rem;
 }
 
 /* --- Forms ---------------------------------------------------------------- */
 
 label {
     display: block;
-    margin: 1rem 0 0.3rem;
-    font-size: 0.9rem;
+    margin: 1.3rem 0 0.4rem;
+    font-size: 0.95rem;
     color: #8f9bb8;
 }
 
 textarea,
 input[type="text"] {
     width: 100%;
-    padding: 0.7rem;
-    font: inherit;
-    font-size: 1rem;
+    padding: 0.8rem;
+    font-family: inherit;
+    /* Must be >= 16px or iOS Safari zooms the page on focus. */
+    font-size: 16px;
     color: #e6e8ee;
     background: #1c1f28;
     border: 1px solid #262a35;
-    border-radius: 8px;
+    border-radius: 10px;
     box-sizing: border-box;
     resize: vertical;
+}
+
+textarea:focus,
+input[type="text"]:focus {
+    outline: 2px solid #4f7cf7;
+    outline-offset: 1px;
 }
 
 body.bedtime textarea,
@@ -128,33 +160,167 @@ body.bedtime input[type="text"] {
     border-color: #2a3450;
 }
 
+body.bedtime textarea:focus,
+body.bedtime input[type="text"]:focus {
+    outline-color: #e5c98a;
+}
+
 button {
-    margin-top: 1rem;
-    padding: 0.55rem 1.3rem;
-    font: inherit;
+    min-height: var(--tap);
+    padding: 0.7rem 1.4rem;
+    font-family: inherit;
+    font-size: 1rem;
     font-weight: 500;
     color: #fff;
     background: #4f7cf7;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
 }
 
-body.bedtime button {
+.primary {
+    margin-top: 1.4rem;
+    width: 100%;
+    font-size: 1.05rem;
+}
+
+/* Scoped to .primary on purpose. `body.bedtime button` has specificity (0,1,2),
+   which beats .chip (0,1,0) and .segmented button (0,1,1) whatever the source
+   order - so it painted every chip and every length button gold. */
+body.bedtime .primary {
     color: #131a2c;
     background: #e5c98a;
 }
 
 button:disabled {
-    opacity: 0.5;
+    opacity: 0.55;
     cursor: wait;
+}
+
+/* Suggestion chips - one tap instead of inventing a theme at bedtime. */
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+}
+
+.chip {
+    min-height: var(--tap);
+    padding: 0.5rem 0.9rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: normal;
+    color: #cfd6e6;
+    background: transparent;
+    border: 1px solid #2a3450;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.chip:hover,
+.chip:active {
+    color: #131a2c;
+    background: #e5c98a;
+    border-color: #e5c98a;
+}
+
+/* Segmented length control. */
+.segmented {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+}
+
+.segmented button {
+    flex: 1;
+    padding: 0.6rem 0.4rem;
+    font-size: 0.95rem;
+    font-weight: normal;
+    color: #cfd6e6;
+    background: #1c2438;
+    border: 1px solid #2a3450;
+    border-radius: 10px;
+}
+
+.segmented button[aria-pressed="true"] {
+    color: #131a2c;
+    background: #e5c98a;
+    border-color: #e5c98a;
+    font-weight: 600;
 }
 
 /* --- Output --------------------------------------------------------------- */
 
 #answer {
-    margin-top: 1.5rem;
+    margin-top: 1.8rem;
     white-space: pre-wrap;
+}
+
+/* The story itself - sized for reading aloud in a dim room. */
+.story {
+    margin-top: 1.8rem;
+    font-size: var(--story-size);
+    line-height: 1.8;
+}
+
+.story p {
+    margin: 0 0 1.1em;
+}
+
+.story-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+}
+
+.story-tools button {
+    font-size: 0.95rem;
+    font-weight: normal;
+    color: #cfd6e6;
+    background: transparent;
+    border: 1px solid #2a3450;
+    border-radius: 10px;
+    padding: 0.55rem 0.9rem;
+}
+
+.story-tools button:hover,
+.story-tools button:active {
+    color: #131a2c;
+    background: #e5c98a;
+    border-color: #e5c98a;
+}
+
+/* Writing indicator - a wait with no feedback reads as a hang. */
+.writing {
+    margin-top: 1.8rem;
+    color: #8f9bb8;
+    font-size: 1.05rem;
+}
+
+.writing .dots::after {
+    content: "";
+    animation: dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes dots {
+    0%   { content: ""; }
+    25%  { content: "."; }
+    50%  { content: ".."; }
+    75%  { content: "..."; }
+}
+
+.writing .slow {
+    display: block;
+    margin-top: 0.7rem;
+    font-size: 0.9rem;
+    color: #6a7186;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .writing .dots::after { animation: none; content: "..."; }
 }
 
 #error {
@@ -162,8 +328,12 @@ button:disabled {
     color: #ff9b9b;
 }
 
+/* --- History -------------------------------------------------------------- */
+
 #history {
-    padding-left: 1.2rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
     color: #b6bccb;
 }
 
@@ -172,7 +342,26 @@ body.bedtime #history {
 }
 
 #history li {
-    margin-bottom: 1.3rem;
+    border-bottom: 1px solid #262a35;
+}
+
+body.bedtime #history li {
+    border-bottom-color: #2a3450;
+}
+
+/* Collapsed by default: ten full stories inline is unreadable on a phone. */
+#history details > summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.9rem 0;
+    min-height: var(--tap);
+    cursor: pointer;
+    list-style: none;
+}
+
+#history details > summary::-webkit-details-marker {
+    display: none;
 }
 
 #history .q {
@@ -185,13 +374,33 @@ body.bedtime #history .q {
     font-weight: normal;
 }
 
-#history .a {
-    white-space: pre-wrap;
-    font-size: 0.92rem;
+#history .meta {
+    font-size: 0.8rem;
+    color: #6a7186;
 }
 
-#history .meta {
-    font-size: 0.78rem;
-    color: #6a7186;
-    margin-top: 0.3rem;
+#history .a {
+    white-space: pre-wrap;
+    font-size: 1rem;
+    line-height: 1.7;
+    padding-bottom: 1rem;
+}
+
+#history .empty {
+    padding: 0.9rem 0;
+}
+
+/* --- Narrow screens ------------------------------------------------------- */
+
+@media (max-width: 30rem) {
+    h1 { font-size: 1.45rem; }
+
+    .chips { gap: 0.4rem; }
+
+    .chip {
+        font-size: 0.9rem;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .story-tools button { flex: 1 1 auto; }
 }

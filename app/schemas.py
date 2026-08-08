@@ -25,6 +25,7 @@ class AskResponse(BaseModel):
 class StoryRequest(BaseModel):
     child_name: str
     theme: str
+    length: str = "medium"  # Defaulted so older clients keep working.
 
 
 class Story(BaseModel):

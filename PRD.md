@@ -133,8 +133,9 @@ came from which, and whether quality moved.
 | Requirement | Target | Actual |
 |---|---|---|
 | Chat latency | < 5s | ~2.5s local · **4.0s in production** |
+| Free-tier headroom | comfortable | **~500 req/day** on `gemini-3.5-flash-lite` |
 | Story latency | < 15s | ~6–8s local · ~9s in production |
-| Story length | 150–250 words | ~185 |
+| Story length | 150–250 words | short ~96 · medium ~201 · long ~234 |
 | Child-safe output | Always | Enforced by system prompt |
 | Cost | Negligible | Free tier; hidden thinking tokens dominate |
 | Config failure | Loud, at startup | `KeyError` on missing env var |

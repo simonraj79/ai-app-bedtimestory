@@ -15,11 +15,18 @@ CHAT_SYSTEM_PROMPT = (
 
 STORY_SYSTEM_PROMPT = (
     "You are a warm, gentle bedtime storyteller for young children. "
-    "Write a calm story of about 200 words with a beginning, a middle and a happy ending. "
+    "Write a calm story of {words} with a beginning, a middle and a happy ending. "
     "Use simple words a five-year-old understands and short sentences. "
+    "Separate paragraphs with a blank line. "
     "Never include anything frightening, sad or violent. "
     "End with the child safe, warm and falling asleep."
 )
+
+STORY_LENGTHS = {
+    "short": "about 120 words",
+    "medium": "about 200 words",
+    "long": "about 320 words",
+}
 
 
 def ask_gemini(system_prompt: str, message: str) -> str:
@@ -30,6 +37,13 @@ def ask_gemini(system_prompt: str, message: str) -> str:
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": message}]}],
             })
+            # The free tier allows 20 requests a minute. Saying "not reachable"
+            # here would be both wrong and useless to the person waiting.
+            if r.status_code == 429:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many stories at once. Wait a moment and try again.",
+                )
             r.raise_for_status()
             return r.json()["candidates"][0]["content"]["parts"][0]["text"]
     except httpx.HTTPError:
@@ -40,8 +54,10 @@ def call_gemini(question: str) -> str:
     return ask_gemini(CHAT_SYSTEM_PROMPT, question)
 
 
-def generate_story(child_name: str, theme: str) -> str:
+def generate_story(child_name: str, theme: str, length: str = "medium") -> str:
+    if length not in STORY_LENGTHS:
+        raise HTTPException(status_code=400, detail="Unknown story length.")
     return ask_gemini(
-        STORY_SYSTEM_PROMPT,
+        STORY_SYSTEM_PROMPT.format(words=STORY_LENGTHS[length]),
         f"Write tonight's bedtime story for a child named {child_name}, about {theme}.",
     )

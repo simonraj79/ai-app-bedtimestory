@@ -43,8 +43,8 @@ Browser ──(static files)──► Vercel:  frontend/
 ```
 
 The frontend and backend are **separate deployments on separate origins**, which
-is why CORS matters here. `frontend/config.js` holds the one line that points the
-browser at the backend.
+is why CORS matters here. `frontend/config.js` derives the backend URL from the
+hostname, so there is nothing to edit when moving between local and production.
 
 ```
 app/                       backend - API only, no HTML
@@ -57,7 +57,7 @@ app/                       backend - API only, no HTML
     story_service.py       save_story / fetch_recent_stories
 frontend/                  frontend - static, deploys to Vercel
   index.html  chat.html  story.html
-  config.js                BACKEND_URL - change per environment
+  config.js                BACKEND_URL - auto-detected per environment
   style.css
 sql/001_create_interactions.sql
 sql/002_create_stories.sql
@@ -80,7 +80,7 @@ Audited and upgraded 8 August 2026. All versions verified working together.
 | Database driver | psycopg `[binary]` | `3.3.*` | `[binary]` ships wheels — no local C toolchain. |
 | Config | python-dotenv | `1.2.*` | Loads `.env` in development. On Render the env vars are real. |
 | Database | PostgreSQL | **16** | Docker locally; Render managed in production. |
-| Model | Gemini | `gemini-3.6-flash` | Fast and cheap; set via `GEMINI_MODEL`, swappable without code changes. |
+| Model | Gemini | `gemini-3.5-flash-lite` | ~500 requests/day on the free tier (vs 20/min for `3.6-flash`), no hidden thinking tokens. Set via `GEMINI_MODEL`. |
 | Frontend | Plain HTML + CSS + vanilla JS | — | No build step, no framework, no bundler. |
 | Backend host | Render | free tier | Web service + managed Postgres. |
 | Frontend host | Vercel | free tier | Static, from `frontend/`. |
@@ -135,7 +135,7 @@ curl http://localhost:8000/healthz     # {"gemini":true,"postgres":true}
 python -m scripts.smoke_gemini         # Gemini only, no database
 ```
 
-Expect ~2.5s for a chat answer, ~6–8s for a ~185-word story.
+Expect ~2.5s for a chat answer, ~6–8s for a story.
 
 ## See your saved conversations
 
@@ -160,12 +160,22 @@ Data survives `docker stop`/`start`; lost only on `docker rm`.
 | `GET` | `/` | JSON banner — confirms the API is up |
 | `POST` | `/ask` | `{question}` → `{answer, history[]}` |
 | `GET` | `/history` | 10 most recent exchanges |
-| `POST` | `/story` | `{child_name, theme}` → `{story, history[]}` |
+| `POST` | `/story` | `{child_name, theme, length?}` → `{story, history[]}`. `length` is `short` \| `medium` \| `long`, defaulting to `medium`. |
 | `GET` | `/stories` | 10 most recent stories |
 | `GET` | `/healthz` | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
 
-Errors: `400` blank input · `422` malformed body (Pydantic) · `502` Gemini or
-Postgres unreachable.
+Errors: `400` blank input or unknown length · `422` malformed body (Pydantic) ·
+`429` free-tier quota exceeded · `502` Gemini or Postgres unreachable.
+
+### Built for a tired parent in a dark room
+
+Choices in `story.html` that look cosmetic but are not: one-tap **suggestion
+chips** (a blank "what should it be about?" is the worst thing to face at 8pm);
+the child's name **remembered** between nights; a **Short / Just right / Longer**
+control; an animated **writing** state that explains the cold start after 12s;
+the story set at **1.15rem / 1.8 line-height** with a persisted **A− / A+**
+toggle for reading aloud; **auto-scroll** to the story; and **collapsed history**,
+because ten full stories inline is ~1,800 words of scrolling on a phone.
 
 ## Configuration
 
@@ -174,15 +184,17 @@ Postgres unreachable.
 | Variable | Value |
 |---|---|
 | `GEMINI_API_KEY` | From <https://aistudio.google.com/apikey> |
-| `GEMINI_MODEL` | `gemini-3.6-flash` |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/ai_apps` |
 | `FRONTEND_ORIGINS` | Comma-separated origins allowed to call the API |
 
 Read with `os.environ["..."]` at import time, so a missing one is a loud
 `KeyError` at startup rather than a confusing failure later.
 
-`frontend/config.js` — `BACKEND_URL`. Public by definition; **never put a key in
-`frontend/`**, every visitor can read it.
+`frontend/config.js` — `BACKEND_URL` is **auto-detected** from the hostname:
+localhost talks to the local backend, anything else to production. Nothing to
+edit per environment. Public by definition; **never put a key in `frontend/`** —
+every visitor can read it.
 
 `.render.env` and `.vercel.env` — **tooling only**. They hold account-wide
 control-plane keys, are gitignored, and must never be deployed. Revoke both once

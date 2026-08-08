@@ -11,7 +11,7 @@ services:
     # which breaks whenever that exact patch is unavailable.
     envVars:
       - key: GEMINI_MODEL
-        value: gemini-3.6-flash
+        value: gemini-3.5-flash-lite
       # Set in the Render dashboard - never committed.
       - key: GEMINI_API_KEY
         sync: false

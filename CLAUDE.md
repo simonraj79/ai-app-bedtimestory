@@ -168,6 +168,32 @@ Gemini touched exactly one file. Let no Gemini-shaped detail leak outward.
 **Adding a third app**: a system prompt constant, a `*_service.py`, schemas, a
 frontend page, a hub card, a `sql/00N_*.sql`, routes. Nothing else.
 
+## The frontend picks its own backend
+
+`frontend/config.js` derives `BACKEND_URL` from `location.hostname` — localhost
+talks to the local backend, anything else to production. Editing one line per
+environment is exactly how `BACKEND_URL` typos and "works locally, broken in
+production" happen, and the course's own gotcha list names it as a top student
+failure. Deriving it removes the class of bug entirely.
+
+Nothing secret may ever live in `frontend/` — every visitor can read it.
+
+## The story page is designed for a tired parent in a dark room
+
+Choices that look cosmetic but are not:
+
+- **Suggestion chips.** A blank "what should it be about?" demands creativity at
+  the worst possible moment. One tap beats an empty field.
+- **The child's name is remembered** (`localStorage`). It does not change nightly.
+- **A wait needs a pulse.** 6–9 seconds of silence reads as a hang, so the
+  writing state rotates lines and, after 12s, explains the free-tier cold start.
+- **Story type is 1.15rem at 1.8 line-height**, with A−/A+ persisted — this text
+  gets read aloud in low light.
+- **History is collapsed.** Ten full stories inline is roughly 1,800 words of
+  scrolling on a phone.
+- **Auto-scroll to the story**, or on a phone it lands below the fold and looks
+  like nothing happened.
+
 ## The system prompts are the product
 
 `CHAT_SYSTEM_PROMPT` and `STORY_SYSTEM_PROMPT` in
@@ -332,6 +358,38 @@ and assert on the number.
 **Vercel token scope:** must be **All Projects** under the team. A token scoped to
 one existing project cannot *create* a new project.
 
+## Free-tier quota is the limit you actually hit — choose the model for it
+
+`gemini-3.6-flash` allows **20 requests per minute** on the free tier. A burst of
+testing exhausts it in under a minute and every call then fails.
+
+**We run `gemini-3.5-flash-lite`: ~500 requests/day** — 25× the headroom, and
+ample for a household. Quality is indistinguishable at this length: "just right"
+lands at 201 words against a 200-word target.
+
+It also spends **no hidden thinking tokens**. `gemini-3.6-flash` billed
+`thoughtsTokenCount: 428` against `candidatesTokenCount: 38` on a one-sentence
+request — over 90% invisible, and that is where its latency went.
+`gemini-3.5-flash-lite` reports `thoughtsTokenCount: None`.
+
+Swap models with the `GEMINI_MODEL` env var; no code changes. Update it in
+**both** places — `.env` locally and the Render dashboard (or
+`PUT /v1/services/<id>/env-vars/GEMINI_MODEL`).
+
+## A quota error is not an outage — do not report it as one
+
+Exceeding the quota returns **429**, which `raise_for_status()` collapses into a
+generic failure, surfacing as *"Gemini is not reachable."* — wrong, and useless
+to the person waiting. `ask_gemini` now checks for 429 **before**
+`raise_for_status()` and returns *"Too many stories at once. Wait a moment and
+try again."*
+
+Because `model_name` is stored per row, a model switch is visible in the data:
+
+```sql
+SELECT model_name, count(*) FROM stories GROUP BY model_name;
+```
+
 ## Render's Postgres refuses external connections — and the error lies
 
 A fresh Render database has `ipAllowList: None`. Connecting from outside fails
@@ -447,6 +505,37 @@ Timings observed: Postgres ~70s from `creating` to `available`; the web service
   from what it actually returns, or CORS silently blocks the whole frontend.
 - The dashboard's renderer intermittently times out under CDP screenshot
   automation; retry once, then fall back to doing it by hand.
+
+## CSS specificity beats source order — `body.bedtime button` painted everything gold
+
+`body.bedtime button` is specificity **(0,1,2)**. `.chip` is (0,1,0) and
+`.segmented button` is (0,1,1). Both lose **no matter where they appear in the
+file**, so every suggestion chip and every length button rendered in the selected
+gold state.
+
+The fix was to stop styling by element and scope the fill to its actual job:
+`body.bedtime .primary`. When a "later" rule appears to be ignored, count
+specificity before reordering anything.
+
+Related: `python -m http.server` caches CSS. After a stylesheet change a normal
+reload can show the old file — hard-reload (`Ctrl+Shift+R`) before concluding the
+CSS is wrong.
+
+## `Reloading...` in the uvicorn log does not mean it reloaded
+
+WatchFiles logged `WARNING: WatchFiles detected changes ... Reloading...` and the
+worker **never restarted** — `Started server process` still appeared exactly once
+with no `Shutting down`. The old code served for another ten minutes while a new
+429 handler sat in the file doing nothing.
+
+Check the pair, not the promise:
+
+```bash
+grep -c "Started server process" <log>   # must increase on every reload
+```
+
+If it has not increased, kill by process (see the orphaned-workers gotcha) and
+start again.
 
 ## Browser automation: element refs go stale after navigation
 
