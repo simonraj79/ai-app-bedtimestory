@@ -51,15 +51,27 @@ vercel.json                deploy frontend/ as static
 .python-version            3.13
 ```
 
-## Live identifiers
+## Live — deployed 8 Aug 2026
+
+| | URL |
+|---|---|
+| **Frontend** | <https://ai-app-bedtimestory.vercel.app> |
+| **Backend** | <https://ai-app-bedtimestory.onrender.com> |
 
 | Thing | Value |
 |---|---|
 | GitHub repo | `simonraj79/ai-app-bedtimestory` (**private**) |
 | Render owner | `tea-csps46i3esus73eojjp0` (Simon Raj's Workspace) |
+| Render service | `srv-d9ra32qfngtc73ctjudg` · free · singapore · auto-deploy on `master` |
+| Render Postgres | `dpg-d9ra1q2fngtc73ctho80-a` · free · singapore · PG 16.14 |
+| **DB expires** | **2026-09-07** — free tier, 30 days from creation |
 | Vercel team | `team_6Mc9jwQee8nmnfyfV8IJPAlx` (`simon-rajs-projects`) |
 | Vercel project | `prj_IRlDJCZYjQNittWSAbm8cKJWle2O` (`ai-app-bedtimestory`) |
 | Local Postgres | Docker container `ai-apps-pg`, database `ai_apps` |
+
+**Vercel auto-deploy is NOT wired.** The frontend was uploaded directly via the
+API because Vercel's GitHub App cannot see the private repo — so `git push`
+redeploys Render but **not** Vercel. See the gotcha below.
 
 ---
 
@@ -114,6 +126,32 @@ the Vercel URL. Neither exists before the other deploys. The order is:
 Two passes, unavoidable. A single-origin deploy (FastAPI serving its own
 templates) removes this entirely — that was the trade accepted when matching the
 course's architecture.
+
+## The production database has no public surface at all
+
+`DATABASE_URL` on Render uses the **internal** connection string
+(`dpg-...-a/ai_apps`, no public hostname). Traffic never leaves Render's private
+network: lower latency, and nothing internet-facing to attack.
+
+The **external** string exists only for one-off admin work like migrations, and
+even that is refused by default — `ipAllowList` is empty on a new database, so
+external connections are dropped. It is currently `[]` again, having been opened
+to a single `/32` for the schema migration and closed immediately after.
+
+If you ever need external access: add your IP, do the work, remove it. Do not
+leave `0.0.0.0/0` behind.
+
+## Two GitHub integrations, two different outcomes
+
+Render pulled the private repo without complaint; Vercel returned
+`repo_not_found`. Nothing is "blocked" — they are simply **separate
+authorisations**. Render's GitHub OAuth was granted during course setup; Vercel's
+GitHub App was never installed on this repo.
+
+The practical consequence is asymmetric deployment: **`git push` redeploys the
+backend but not the frontend.** Until Vercel's app is granted access, frontend
+changes need a manual API upload, and it is easy to end up with a frontend that
+silently lags the backend.
 
 ## Provider isolation is the point
 
@@ -289,6 +327,36 @@ and assert on the number.
 **Vercel token scope:** must be **All Projects** under the team. A token scoped to
 one existing project cannot *create* a new project.
 
+## Render's Postgres refuses external connections — and the error lies
+
+A fresh Render database has `ipAllowList: None`. Connecting from outside fails
+with:
+
+```
+psycopg.OperationalError: connection failed:
+  SSL connection has been closed unexpectedly
+```
+
+**Nothing is wrong with SSL.** Render drops unlisted connections mid-handshake,
+and the TLS layer reports it as a closed connection. Chasing certificates or
+`sslmode` here wastes an hour.
+
+The fix, and the pattern to reuse for any future migration:
+
+```bash
+# 1. find your public IP
+curl -s https://api.ipify.org
+# 2. open to that IP only
+curl -X PATCH -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+  https://api.render.com/v1/postgres/<db-id> \
+  -d '{"ipAllowList":[{"cidrBlock":"<ip>/32","description":"temporary - migration"}]}'
+# 3. run the migration (psycopg needs sslmode="require")
+# 4. close it again
+  -d '{"ipAllowList":[]}'
+```
+
+Migrations run through `psycopg` directly — there is no `psql` on this machine.
+
 ## Vercel cannot see a private GitHub repo by default
 
 `POST /v11/projects` with `gitRepository` fails:
@@ -302,12 +370,56 @@ The repo exists; Vercel's GitHub App lacks access. Fix at
 Or make the repo public. Creating the project *without* `gitRepository` works and
 can be linked afterwards.
 
+**Workaround actually used:** direct file upload, no Git involved —
+`POST /v13/deployments?teamId=<team>&forceNew=1` with
+`files: [{file, data: <base64>, encoding: "base64"}]` and
+`projectSettings: {framework, buildCommand, installCommand, outputDirectory: null}`.
+`outputDirectory` must be `null` when files are uploaded at the deployment root,
+even though the project and `vercel.json` say `frontend` — those apply to *Git*
+builds, where the repo root is the deployment root.
+
+It works and goes live in seconds, but **loses auto-deploy**. Re-run
+`scripts/`-style upload after any frontend change until the repo is linked.
+
+## Render API notes
+
+Creating a web service needs a nested shape that is easy to get wrong:
+
+```json
+{"type":"web_service","name":"...","ownerId":"tea-...","repo":"https://github.com/...",
+ "branch":"master","autoDeploy":"yes",
+ "serviceDetails":{"env":"python","region":"singapore","plan":"free",
+   "healthCheckPath":"/healthz",
+   "envSpecificDetails":{"buildCommand":"...","startCommand":"..."}},
+ "envVars":[{"key":"...","value":"..."}]}
+```
+
+Timings observed: Postgres ~70s from `creating` to `available`; the web service
+~75s from create to `live`. Poll `/v1/services/<id>/deploys?limit=1` and stop on
+`live | build_failed | update_failed | canceled`.
+
 ## Vercel API notes
 
-- `POST https://api.vercel.com/v11/projects?teamId=<team>` — `teamId` is required
-  for team-owned projects, as a **query parameter**.
+- `?teamId=<team>` is required for team-owned resources, as a **query parameter**.
+- Aliases are only present once `readyState` is `READY`. The production alias
+  came out as `ai-app-bedtimestory.vercel.app` — matching the project name — but
+  **do not assume it**; read it from the deployment and set `FRONTEND_ORIGINS`
+  from what it actually returns, or CORS silently blocks the whole frontend.
 - The dashboard's renderer intermittently times out under CDP screenshot
   automation; retry once, then fall back to doing it by hand.
+
+## Browser automation: element refs go stale after navigation
+
+`find` returned `ref_5`/`ref_7`/`ref_8` for the story form; clicking and typing
+against them reported **success** while the fields stayed empty — the screenshot
+showed placeholder text, not input. The refs belonged to a pre-navigation
+snapshot of the page.
+
+Two rules that follow:
+
+- After any navigation, re-`find` or use coordinates from a fresh screenshot.
+- **Screenshot to confirm input landed before clicking submit.** A "Typed ..."
+  success message is not evidence that the value reached the field.
 
 ## `pip list --outdated` lies about transitive pins
 
@@ -363,12 +475,23 @@ docker exec ai-apps-pg psql -U postgres -d ai_apps \
 `/healthz` reports each dependency separately on purpose. It always returns
 **200** — a diagnostic, not a gate.
 
-# Current state — verified 8 Aug 2026
+# Current state — deployed and verified 8 Aug 2026
 
-Backend API-only and passing (`/` `/ask` `/history` `/story` `/stories`
-`/healthz`); frontend static on `:5500`; CORS correct both ways; real
-cross-origin `POST /ask` → 200; blank input → 400; malformed body → 422;
-dependencies upgraded and re-verified; pushed to GitHub with zero secrets; Render
-and Vercel tokens verified; Vercel project created.
+**Live in production**, exercised through a real browser, not just curl:
 
-**Not yet done:** Vercel↔GitHub link, Render deploy, and the two-pass URL wiring.
+- Hub loads; its background `/healthz` succeeds cross-origin (no error banner)
+- **Chat** — asked through the UI, answered, persisted (`interactions` id 1–2)
+- **Bedtime Story** — Anaya + a lantern-carrying turtle → 179 words, correct
+  tone, ends with the child asleep, persisted (`stories` id 1)
+- Production CORS: Vercel origin → `200` + allow header; rogue origin → `400`
+- Backend cold response `GET /` 0.10s; `POST /ask` 4.0s end to end
+
+Locally: both servers run (backend `:8000`, frontend `:5500`), blank input → 400,
+malformed body → 422, `python -m scripts.smoke_gemini` passes both apps.
+
+**Outstanding:**
+
+1. **Vercel ↔ GitHub link** — until then `git push` redeploys only the backend
+2. **Revoke both deploy tokens** — no longer needed; the Render one was exposed
+   earlier in the session
+3. **2026-09-07** — free Postgres expires; `/healthz` will show `postgres: false`
