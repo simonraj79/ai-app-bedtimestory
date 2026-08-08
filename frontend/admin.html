@@ -108,7 +108,7 @@
         usageEl.hidden = false;
       } catch (e) {
         errEl.textContent = e.message === "Failed to fetch"
-          ? `Cannot reach the backend at ${BACKEND_URL}. On Render's free tier it may be waking up — wait 30-60s and reload.`
+          ? "Cannot reach the server. If it was asleep, wait a moment and try again."
           : e.message;
       }
     }

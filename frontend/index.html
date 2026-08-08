@@ -10,14 +10,12 @@
     <title>AI Apps</title>
     <link rel="stylesheet" href="style.css">
 </head>
+<!-- No sign-in on this page, on purpose. The hub calls no authenticated
+     endpoint, so a sign-in bar here buys nothing and costs a lot: it put a
+     second sign-in prompt in front of anyone who had not signed in yet, once
+     here and again on the app they opened. Sign-in belongs where it is
+     actually needed - at the point of asking for a story or an answer. -->
 <body>
-    <div class="authbar">
-        <div id="g-signin"></div>
-        <span id="auth-hint" class="auth-hint">Sign in with Google to use the apps.</span>
-        <span id="auth-who" class="auth-who" hidden></span>
-        <button type="button" id="signout" class="signout" hidden>Sign out</button>
-    </div>
-
     <h1>AI Apps</h1>
     <p class="lede">Two single-turn apps. One question in, one answer out.</p>
 
@@ -35,50 +33,22 @@
         </a>
     </div>
 
-    <p id="status" class="status"></p>
-
-    <script src="config.js"></script>
-    <script>
-    const hintEl = document.getElementById("auth-hint");
-    const whoEl = document.getElementById("auth-who");
-    const signoutBtn = document.getElementById("signout");
-    const buttonEl = document.getElementById("g-signin");
-
-    initGoogleAuth({
-      buttonEl,
-      onSignIn: user => {
-        whoEl.textContent = `Signed in as ${user.name || user.email}`;
-        whoEl.hidden = false;
-        signoutBtn.hidden = false;
-        hintEl.hidden = true;
-        buttonEl.hidden = true;
-      },
-      onSignOut: () => {
-        whoEl.hidden = true;
-        signoutBtn.hidden = true;
-        hintEl.hidden = false;
-        buttonEl.hidden = false;
-      },
-    });
-    signoutBtn.addEventListener("click", signOut);
-
-    // Surfaces a dead or sleeping backend here, rather than as a confusing
-    // "Failed to fetch" the first time someone presses a button. /healthz is
-    // deliberately unauthenticated, so this runs signed out too.
-    fetch(`${BACKEND_URL}/healthz`)
-      .then(r => r.json())
-      .then(d => {
-        const el = document.getElementById("status");
-        if (d.gemini && d.postgres) return;
-        el.textContent = `Backend degraded — gemini: ${d.gemini}, postgres: ${d.postgres}`;
-      })
-      .catch(() => {
-        document.getElementById("status").textContent =
-          `Cannot reach the backend at ${BACKEND_URL}. If it is on Render's free tier it may be waking up — wait 30-60s and reload.`;
-      });
-    </script>
-
-    <script src="https://accounts.google.com/gsi/client" async defer
-            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
+    <!-- The slow first request used to be announced by a red "cannot reach the
+         backend" banner, which is alarming and describes a server problem the
+         reader cannot act on. The same fact is more useful stated calmly, up
+         front, as something to expect. -->
+    <section class="howto">
+        <h2>How it works</h2>
+        <ol>
+            <li><strong>Pick an app</strong> above.</li>
+            <li><strong>Sign in with Google</strong> when it asks — one tap, no
+                password, nothing to fill in.</li>
+            <li><strong>Ask for what you want.</strong> The first one after a
+                quiet spell can take up to a minute while the server wakes up.
+                After that it is quick.</li>
+        </ol>
+        <p class="note">Everything you make is saved and shown only to you. You
+            can sign out from inside either app.</p>
+    </section>
 </body>
 </html>

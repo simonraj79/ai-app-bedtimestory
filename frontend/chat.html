@@ -61,7 +61,7 @@
         if (r.ok) renderHistory(await r.json());
       } catch (e) {
         document.getElementById("error").textContent =
-          `Cannot reach the backend at ${BACKEND_URL}.`;
+          "Cannot reach the server. If it was asleep, wait a moment and try again.";
       }
     }
 
@@ -95,7 +95,7 @@
       } catch (e) {
         ansEl.textContent = "";
         errEl.textContent = e.message === "Failed to fetch"
-          ? `Cannot reach the backend at ${BACKEND_URL}. Check it is running and that this origin is allowed by CORS.`
+          ? "Cannot reach the server. If it was asleep, wait a moment and try again."
           : e.message;
       } finally {
         // Not plain `false`: a 401 above signed us out, and re-enabling the

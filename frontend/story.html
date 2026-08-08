@@ -137,7 +137,8 @@
         if (r.status === 401) return handleAuthExpired(errEl);
         if (r.ok) renderHistory(await r.json());
       } catch {
-        errEl.textContent = `Cannot reach the backend at ${BACKEND_URL}.`;
+        errEl.textContent =
+          "Cannot reach the story server. If it was asleep, wait a moment and try again.";
       }
     }
 

@@ -125,10 +125,36 @@ body.bedtime h2 {
     margin-top: 0.3rem;
 }
 
-.status {
-    margin-top: 1.5rem;
-    color: #ffcf8b;
-    font-size: 0.9rem;
+/* --- How it works (hub only) ---------------------------------------------- */
+
+/* No divider of its own: the global h2 rule already draws the section rule
+   that "Earlier stories" and "Recent" use. Adding a second one here painted
+   two lines. */
+.howto h2 {
+    margin-bottom: 0.8rem;
+}
+
+.howto ol {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: #8b93a7;
+    font-size: 0.95rem;
+    line-height: 1.7;
+}
+
+.howto li {
+    margin-bottom: 0.5rem;
+}
+
+.howto strong {
+    color: #e6e8ee;
+    font-weight: normal;
+}
+
+.howto .note {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: #6d7488;
 }
 
 /* --- Forms ---------------------------------------------------------------- */
@@ -267,6 +293,16 @@ button:disabled {
     gap: 0.6rem 0.8rem;
     margin: 1rem 0 0.5rem;
     min-height: var(--tap);
+}
+
+/* Google draws its button into an iframe it sizes at render time. As a flex
+   item with no width basis the container collapsed and the button degraded to
+   the bare "G" icon - which reads as a broken image, not a sign-in control.
+   min-width gives it the basis; max-width stops it overflowing a narrow phone. */
+#g-signin {
+    flex: 0 0 auto;
+    min-width: 240px;
+    max-width: 100%;
 }
 
 .auth-hint,

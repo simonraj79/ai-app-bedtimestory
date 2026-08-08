@@ -146,13 +146,22 @@ function googleLibraryLoaded() {
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: handleGoogleCredential,
-    auto_select: true,
   });
   renderGoogleButton();
 
-  // One Tap only when there is nothing to restore, or a reader who is already
-  // signed in gets prompted for the account they are currently using.
-  if (!getToken()) google.accounts.id.prompt();
+  // Deliberately NO google.accounts.id.prompt() here.
+  //
+  // One Tap is a prompt, not a sign-in: dismissing it leaves you signed out, so
+  // it reappeared on the next page and read as being asked to sign in twice.
+  // Alongside the button it also put two ways to sign in on one screen.
+  //
+  // It is the fragile half of GIS as well - it needs FedCM, third-party cookie
+  // permission and no content blocker in the way, which is why it worked on
+  // some machines and silently did nothing on others. The rendered button
+  // depends on none of that. One affordance, everywhere, or none.
+  //
+  // `auto_select` went with it: it only ever applied to One Tap, so keeping it
+  // would be a flag that does nothing.
 }
 
 // accounts.google.com is blocked by some content blockers and networks. Without
