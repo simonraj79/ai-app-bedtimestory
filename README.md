@@ -1,12 +1,12 @@
 # AI Apps
 
-One FastAPI project hosting two **single-turn** AI apps behind a hub page,
-powered by the Gemini API and Postgres.
+Two **single-turn** AI apps behind a hub page — a FastAPI backend on Render, a
+static frontend on Vercel, Gemini for the model, Postgres for the record.
 
 | # | App | Page | What it does |
 |---|---|---|---|
-| 1 | 💬 Chat | `/chat` | Ask a question, get a short answer. Every exchange is saved. |
-| 2 | 🌙 Bedtime Story | `/bedtime` | A gentle ~200-word story built around a child's name and a theme. |
+| 1 | 💬 Chat | `chat.html` | Ask a question, get a short answer. Every exchange is saved. |
+| 2 | 🌙 Bedtime Story | `story.html` | A gentle ~200-word story built around a child's name and a theme. |
 
 **Single-turn** means one request in, one answer out. The model never sees
 earlier exchanges — the saved history is for *you* to read back, not context fed
@@ -17,68 +17,74 @@ into the prompt.
 ## Architecture
 
 ```
-Browser  ──POST──►  FastAPI  ──httpx──►  Gemini API
-                       │
-                       └──psycopg──►  Postgres (one database, two tables)
+Browser ──(static files)──► Vercel:  frontend/
+   │
+   └──(fetch, cross-origin)──► Render:  FastAPI ──httpx──► Gemini API
+                                  │
+                                  └──psycopg──► Postgres (one DB, two tables)
 ```
 
-FastAPI serves its own HTML, so there is one origin, no CORS, and one deploy.
+The frontend and backend are **separate deployments on separate origins**, which
+is why CORS matters here. `frontend/config.js` holds the one line that points the
+browser at the backend.
 
 ```
-app/
-  main.py                  hub + both apps + /healthz
+app/                       backend - API only, no HTML
+  main.py                  CORS + routes + /healthz
   database.py              DATABASE_URL + get_conn()
   schemas.py               chat models, then story models
   services/
     gemini_service.py      the only file that talks to Gemini
     chat_service.py        save_interaction / fetch_recent_history
     story_service.py       save_story / fetch_recent_stories
-  templates/
-    index.html             the hub
-    chat.html              app 1
-    story.html             app 2
-  static/style.css
-sql/
-  001_create_interactions.sql
-  002_create_stories.sql
+frontend/                  frontend - static, deploys to Vercel
+  index.html  chat.html  story.html
+  config.js                BACKEND_URL - change per environment
+  style.css
+sql/001_create_interactions.sql
+sql/002_create_stories.sql
 scripts/smoke_gemini.py    exercises both apps without touching the database
-render.yaml                Render Blueprint (web service + free Postgres)
-.python-version            3.13 - Render reads this to pick the runtime
+render.yaml  Procfile      Render deploy
+vercel.json  .vercelignore Vercel deploy
+.python-version            3.13
 ```
 
 ## Tech stack
 
-Audited and upgraded 8 August 2026. All versions below verified working together.
+Audited and upgraded 8 August 2026. All versions verified working together.
 
 | Layer | Choice | Version | Why |
 |---|---|---|---|
-| Language | Python | **3.13** | Pinned via `.python-version`. Render's default is now 3.14.3 — we pin so the runtime matches what's tested. |
-| Web framework | FastAPI | `0.141.*` | Typed request/response validation at the boundary; serves the HTML too. |
-| ASGI server | Uvicorn `[standard]` | `0.52.*` | `[standard]` adds `watchfiles` for `--reload` and `websockets`. |
-| Templating | Jinja2 | `3.1.*` | Server-rendered pages; no frontend build step. |
-| HTTP client | HTTPX | `0.28.*` | Calls the Gemini REST API. Same library FastAPI's test client uses. |
-| Database driver | psycopg `[binary]` | `3.3.*` | Postgres 3.x driver. `[binary]` ships wheels, so no local C toolchain. |
+| Language | Python | **3.13** | Pinned via `.python-version`. Render's default is now 3.14.3; we pin so the runtime matches what's tested. |
+| Web framework | FastAPI | `0.141.*` | Typed validation at the boundary. API only — it serves no HTML. |
+| ASGI server | Uvicorn `[standard]` | `0.52.*` | `[standard]` adds `watchfiles` for `--reload`. |
+| HTTP client | HTTPX | `0.28.*` | Calls the Gemini REST API. |
+| Database driver | psycopg `[binary]` | `3.3.*` | `[binary]` ships wheels — no local C toolchain. |
 | Config | python-dotenv | `1.2.*` | Loads `.env` in development. On Render the env vars are real. |
 | Database | PostgreSQL | **16** | Docker locally; Render managed in production. |
 | Model | Gemini | `gemini-3.6-flash` | Fast and cheap; set via `GEMINI_MODEL`, swappable without code changes. |
-| Hosting | Render | free tier | Web service + managed Postgres, one account, no CORS. |
+| Frontend | Plain HTML + CSS + vanilla JS | — | No build step, no framework, no bundler. |
+| Backend host | Render | free tier | Web service + managed Postgres. |
+| Frontend host | Vercel | free tier | Static, from `frontend/`. |
 
 **No ORM, no migration tool, no test framework, no logging framework, no frontend
-framework.** Plain SQL in two service files, plain `<script>` in two templates.
-Every dependency above is load-bearing — see `CLAUDE.md` for the doctrine.
+framework, and no Jinja2** — the frontend is static and deploys separately.
 
 Pins are **minor-locked with a floating patch** (`0.141.*`): security fixes arrive
 automatically, surprise API changes don't.
 
-## Run it
+## Run it locally
 
-**1. Start Postgres** (needs Docker Desktop running):
+You need **two** servers, because production has two origins and you want local
+to fail the same way production would.
+
+**1. Postgres** (needs Docker Desktop running):
 
 ```bash
 docker start ai-apps-pg
 ```
 
-The container and the `ai_apps` database already exist. To rebuild from scratch:
+First time only:
 
 ```bash
 docker run -d --name ai-apps-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ai_apps -p 5432:5432 postgres:16
@@ -86,33 +92,34 @@ docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/001_create_interacti
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/002_create_stories.sql
 ```
 
-**2. Start the app:**
+**2. Backend** — terminal one:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload
 ```
 
-Open <http://localhost:8000>.
+**3. Frontend** — terminal two:
+
+```powershell
+python -m http.server 5500 --directory frontend --bind 127.0.0.1
+```
+
+Open <http://localhost:5500>.
+
+> Port **5500**, not 3000 — Docker Desktop holds 3000 on this machine.
+> `FRONTEND_ORIGINS` in `.env` must match exactly, scheme and port included.
 
 ## Check it's healthy
 
 ```bash
 curl http://localhost:8000/healthz     # {"gemini":true,"postgres":true}
+python -m scripts.smoke_gemini         # Gemini only, no database
 ```
 
-If either says `false`, that's the half to fix. To test Gemini alone, with no
-database involved:
-
-```bash
-python -m scripts.smoke_gemini
-```
-
-Expect ~2.5s for the chat answer and ~6–8s for a ~185-word story.
+Expect ~2.5s for a chat answer, ~6–8s for a ~185-word story.
 
 ## See your saved conversations
-
-Every question asked through the browser becomes a row:
 
 ```bash
 docker exec ai-apps-pg psql -U postgres -d ai_apps \
@@ -123,20 +130,18 @@ docker exec ai-apps-pg psql -U postgres -d ai_apps \
 ```
 
 Each row is a **complete, self-contained exchange** — question, answer, model,
-timestamp. There is no thread linking one row to the next. That is the
-single-turn design: a log of exchanges, not a conversation transcript.
+timestamp. Nothing links one row to the next. That's the single-turn design: a
+log of exchanges, not a conversation transcript.
 
-Data survives `docker stop`/`docker start`. It is lost only on `docker rm`.
+Data survives `docker stop`/`start`; lost only on `docker rm`.
 
 ## API
 
 | Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/` | Hub — pick an app |
-| `GET` | `/chat` | App 1 page |
+| `GET` | `/` | JSON banner — confirms the API is up |
 | `POST` | `/ask` | `{question}` → `{answer, history[]}` |
 | `GET` | `/history` | 10 most recent exchanges |
-| `GET` | `/bedtime` | App 2 page |
 | `POST` | `/story` | `{child_name, theme}` → `{story, history[]}` |
 | `GET` | `/stories` | 10 most recent stories |
 | `GET` | `/healthz` | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
@@ -146,78 +151,83 @@ Postgres unreachable.
 
 ## Configuration
 
-`.env` — app runtime config, never committed:
+`.env` — backend runtime config, never committed:
 
 | Variable | Value |
 |---|---|
 | `GEMINI_API_KEY` | From <https://aistudio.google.com/apikey> |
 | `GEMINI_MODEL` | `gemini-3.6-flash` |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/ai_apps` |
+| `FRONTEND_ORIGINS` | Comma-separated origins allowed to call the API |
 
 Read with `os.environ["..."]` at import time, so a missing one is a loud
 `KeyError` at startup rather than a confusing failure later.
 
-`.render.env` — **tooling only**, holds `RENDER_API_KEY`. The app never reads it
-and it must never be deployed; that key can create, delete, and bill resources
-across your whole Render account. Both files are gitignored (verified with
-`git check-ignore`).
+`frontend/config.js` — `BACKEND_URL`. Public by definition; **never put a key in
+`frontend/`**, every visitor can read it.
 
-## Deploying to Render
+`.render.env` and `.vercel.env` — **tooling only**. They hold account-wide
+control-plane keys, are gitignored, and must never be deployed. Revoke both once
+deploying is finished.
 
-`render.yaml` is written and the start command is tested. Remaining steps:
+## Deploying
 
-1. `git commit` — the repo is initialised and staged, not yet committed
-2. Push to GitHub (Blueprint deploys read `render.yaml` **from a repo**, so a
-   local commit is not enough)
-3. Render → **New → Blueprint** → select the repo
-4. Set `GEMINI_API_KEY` in the dashboard (it is `sync: false`, so it is
-   deliberately absent from the committed file)
-5. Apply both migrations to the managed database
+⚠️ **Circular dependency.** The frontend needs the backend's URL; the backend's
+CORS needs the frontend's URL. Neither exists first, so it takes two passes:
 
-⚠️ Render's free Postgres **expires 30 days after creation** — there is no reason
-to create it before you actually deploy.
+1. **Render** — Blueprint from the GitHub repo, set `GEMINI_API_KEY`, apply both
+   migrations. Note the backend URL.
+2. Set `BACKEND_URL` in `frontend/config.js`, commit, push.
+3. **Vercel** — deploy `ai-app-bedtimestory`. Note the frontend URL.
+4. Set `FRONTEND_ORIGINS` on Render to that URL. Redeploy.
+
+**Prerequisite:** Vercel's GitHub App must have access to
+`simonraj79/ai-app-bedtimestory`, which is private —
+<https://github.com/settings/installations> → Vercel → Configure → add the repo.
+
+⚠️ Render's free Postgres **expires 30 days after creation**. Don't create it
+before you actually deploy.
 
 ## Known limits
 
-These are the honest edges of a single-turn, ungrounded app, not bugs:
+Honest edges of a single-turn, ungrounded app — not bugs:
 
-- **No memory.** Ask the same question twice and you get the same answer; the
-  model does not know it just replied.
+- **No memory.** The same question twice gives the same answer; the model doesn't
+  know it just replied.
 - **No grounding.** Asked "who won the world cup" in August 2026, it named the
-  2022 tournament — its training data ends earlier and nothing supplies current
-  facts. Closing this needs retrieval or a search tool.
-- **No clarifying questions.** An ambiguous prompt gets a hedged answer covering
-  every interpretation, because there is no next turn in which to ask.
+  2022 tournament. Its training data ends earlier and nothing supplies current
+  facts.
+- **No clarifying questions.** Ambiguous prompts get hedged answers covering every
+  interpretation, because there's no next turn in which to ask.
 
 ## Tuning the output
 
 `CHAT_SYSTEM_PROMPT` and `STORY_SYSTEM_PROMPT` in
 `app/services/gemini_service.py` shape the output far more than any code change.
-Try predicting what an edit will do *before* running it, then compare — that gap
-is where the learning is.
+Predict what an edit will do *before* running it, then compare — that gap is
+where the learning is.
 
 ## Adding a third app
 
 1. A system prompt constant in `gemini_service.py`
 2. A `<name>_service.py` with save + fetch
 3. Schemas in `schemas.py`
-4. A template, and a card on the hub in `index.html`
+4. A page in `frontend/`, and a card on the hub in `frontend/index.html`
 5. A `sql/00N_create_<name>.sql`
 6. Routes in `main.py`
-
-Nothing else should need to change.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| New routes 404, edits do nothing, **no access-log lines** | A stale uvicorn worker is still serving the port | See `CLAUDE.md` → "Killing uvicorn by port leaves orphaned workers". Check reality with `curl localhost:8000/openapi.json` |
+| `Failed to fetch` in the browser, **nothing in the backend log** | CORS blocked the preflight — the request never arrived | Check `FRONTEND_ORIGINS` matches the frontend origin exactly, scheme and port included |
+| New routes 404, edits do nothing, **no access-log lines** | A stale uvicorn worker is still serving | See `CLAUDE.md` → orphaned workers. Check reality with `curl localhost:8000/openapi.json` |
 | `KeyError: 'GEMINI_API_KEY'` | No `.env` in the project root | `cp .env.example .env` and fill it in |
 | `/healthz` shows `postgres: false` | Container not running | `docker start ai-apps-pg` |
-| Request hangs ~10s then 502 | Postgres unreachable; Windows blackholes the closed port instead of refusing it | Start the container. `get_conn()` sets `connect_timeout=5` so this fails in seconds instead of forever |
+| Request hangs ~10s then 502 | Postgres unreachable; Windows blackholes the closed port | Start the container. `connect_timeout=5` makes this fail in seconds, not forever |
 | `ModuleNotFoundError: No module named 'app'` | Ran a script by path | `python -m scripts.smoke_gemini` from the project root |
-| Render API returns bare `401` | Truncated API key paste | Keys are ~32–40 chars. Check the length first |
-| `address already in use` | A previous server is still up | Kill it properly (see `CLAUDE.md`), or `--port 8001` |
+| Frontend server won't start on 3000 | Docker Desktop holds that port | Use 5500 |
+| Render/Vercel API returns bare `401` | Truncated token paste | Render ~32–40 chars, Vercel 60 |
 
 ## More
 

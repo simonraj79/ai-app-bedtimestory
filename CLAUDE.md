@@ -5,47 +5,61 @@ built to, the insights worth keeping, and the gotchas that already cost time.
 
 ## What this is
 
-One FastAPI project hosting **two single-turn AI apps** behind a hub page.
-Gemini is the model; Postgres stores what was asked and answered.
+Two **single-turn** AI apps behind a hub page. A FastAPI **backend** (Render) and
+a separate static **frontend** (Vercel), talking cross-origin.
 
 | # | App | Page | Endpoint | Table |
 |---|---|---|---|---|
-| 1 | 💬 Chat | `/chat` | `POST /ask` | `interactions` |
-| 2 | 🌙 Bedtime Story | `/bedtime` | `POST /story` | `stories` |
+| 1 | 💬 Chat | `chat.html` | `POST /ask` | `interactions` |
+| 2 | 🌙 Bedtime Story | `story.html` | `POST /story` | `stories` |
 
 ```
-Browser  ──POST──►  FastAPI  ──httpx──►  Gemini API
-                       │
-                       └──psycopg──►  Postgres (one database, two tables)
+Browser ──(static)──► Vercel: frontend/
+   │
+   └──(fetch, CORS)──► Render: FastAPI ──httpx──► Gemini API
+                          │
+                          └──psycopg──► Postgres (one DB, two tables)
 ```
-
-One project, one database, one deploy. FastAPI serves its own HTML, so there is
-no CORS and no second frontend host.
 
 **This folder supersedes `D:\SINGLE TURN CHAT`.** Everything lives here.
 
 ## Layout
 
 ```
-app/
-  main.py                  hub + both apps + /healthz
+app/                       the backend - API only, no HTML
+  main.py                  CORS + routes + /healthz
   database.py              DATABASE_URL + get_conn()
   schemas.py               chat models, then story models
   services/
     gemini_service.py      the ONLY file that knows the model provider
     chat_service.py        save_interaction / fetch_recent_history
     story_service.py       save_story / fetch_recent_stories
-  templates/
-    index.html             the hub
-    chat.html              app 1
-    story.html             app 2
-  static/style.css         shared; body.bedtime overrides the palette
+frontend/                  the frontend - deployed to Vercel, static only
+  index.html               hub
+  chat.html                app 1
+  story.html               app 2
+  config.js                BACKEND_URL - the one line to change per environment
+  style.css                body.bedtime overrides the palette
 sql/
   001_create_interactions.sql
   002_create_stories.sql
 scripts/smoke_gemini.py    exercises both apps, no database involved
 render.yaml                Render Blueprint (web service + free Postgres)
+Procfile                   Render start command
+vercel.json                deploy frontend/ as static
+.vercelignore              keep the Python backend away from Vercel
+.python-version            3.13
 ```
+
+## Live identifiers
+
+| Thing | Value |
+|---|---|
+| GitHub repo | `simonraj79/ai-app-bedtimestory` (**private**) |
+| Render owner | `tea-csps46i3esus73eojjp0` (Simon Raj's Workspace) |
+| Vercel team | `team_6Mc9jwQee8nmnfyfV8IJPAlx` (`simon-rajs-projects`) |
+| Vercel project | `prj_IRlDJCZYjQNittWSAbm8cKJWle2O` (`ai-app-bedtimestory`) |
+| Local Postgres | Docker container `ai-apps-pg`, database `ai_apps` |
 
 ---
 
@@ -57,70 +71,86 @@ Every request sends exactly `[systemInstruction, one user message]`. The model
 never sees earlier exchanges. The tables are a **log for the human to read back**
 — never fed into a prompt.
 
-**This is observable in the data.** Rows 2 and 3 of `interactions` are the same
-question asked twice, and the answers are near-identical: the model had no idea
-it had just answered. If history were being fed back, the second answer would
-have referenced the first.
+**Observable in the data.** Rows 2 and 3 of `interactions` are the same question
+asked twice with near-identical answers: the model had no idea it had just
+answered. If history were fed back, the second would have referenced the first.
 
 Do not "helpfully" add conversation history. That is a different product with
-different costs: session keys, token growth per turn, per-user isolation. If it
-is wanted, make it a deliberate decision.
+different costs: session keys, token growth per turn, per-user isolation.
 
 ## The app is ungrounded, and that has visible consequences
 
 Asked "who won the world cup" on 8 Aug 2026, the model named the **2022**
-tournament as the most recent. Its training data ends before 2026 and nothing in
-this app grounds it in the present. It also hedged across four different
-tournaments rather than asking which sport — because there is no next turn in
-which to receive the answer.
+tournament as most recent. Its training data ends before 2026 and nothing here
+grounds it in the present. It also hedged across four competitions rather than
+asking which sport — because there is no next turn in which to receive an answer.
 
-Neither is a bug. They are the honest shape of a single-turn, ungrounded app.
-Closing the first gap means retrieval or a search tool; closing the second means
-going multi-turn. Both are real features, not fixes.
+Neither is a bug. Closing the first means retrieval or a search tool; closing the
+second means going multi-turn. Both are features, not fixes.
+
+## CORS is a browser policy, not authentication
+
+Verified locally: a preflight `OPTIONS` from a disallowed origin gets **400 with
+no `access-control-allow-origin`**, so the browser never sends the real request.
+That is why the course's documented failure is *"Failed to fetch" with nothing in
+the backend logs* — people hunt through server code for a request that never
+arrived.
+
+But `curl` ignores CORS entirely. Anyone can still `POST /ask` from a terminal.
+CORS stops **other people's websites** using your API through their visitors'
+browsers; it does not stop a determined caller. Treating it as security is a
+common and expensive misreading.
+
+## The split deploy has a circular dependency
+
+`frontend/config.js` needs the Render URL; the backend's `FRONTEND_ORIGINS` needs
+the Vercel URL. Neither exists before the other deploys. The order is:
+
+1. Deploy Render → get the backend URL
+2. Set `BACKEND_URL` in `frontend/config.js`, commit
+3. Deploy Vercel → get the frontend URL
+4. Set `FRONTEND_ORIGINS` on Render to that URL
+
+Two passes, unavoidable. A single-origin deploy (FastAPI serving its own
+templates) removes this entirely — that was the trade accepted when matching the
+course's architecture.
 
 ## Provider isolation is the point
 
 `main.py` knows only `call_gemini(question)` and
-`generate_story(child_name, theme)`. Both funnel through one
-`ask_gemini(system_prompt, message)` that owns the HTTP call. Everything
-Gemini-shaped lives in one file — which is why moving from Ollama to Gemini
-touched exactly one file. Let no Gemini-shaped detail leak into routes or
-services.
+`generate_story(child_name, theme)`; both funnel through one
+`ask_gemini(system_prompt, message)` owning the HTTP call. Moving from Ollama to
+Gemini touched exactly one file. Let no Gemini-shaped detail leak outward.
 
-**Adding a third app** means: a system prompt constant, a `*_service.py`,
-schemas, a template, a hub card, and a `sql/00N_*.sql`. Nothing else changes.
+**Adding a third app**: a system prompt constant, a `*_service.py`, schemas, a
+frontend page, a hub card, a `sql/00N_*.sql`, routes. Nothing else.
 
 ## The system prompts are the product
 
 `CHAT_SYSTEM_PROMPT` and `STORY_SYSTEM_PROMPT` in
-`app/services/gemini_service.py` do more to shape output than any code. The story
-prompt carries length, vocabulary, tone, safety rules, and the ending. Tuning it
-is the highest-leverage change available — change it deliberately, then re-run
-the smoke test.
+`app/services/gemini_service.py` do more to shape output than any code. Child
+safety for app 2 lives entirely in its prompt — if illustrations are ever added,
+they need their own pass, because image models do not inherit it.
 
-Child-safety for app 2 lives entirely in that prompt. If illustrations are ever
-added, they need their own safety pass — image models do not inherit it.
+## Committed config, zero secrets
 
-## `render.yaml` describes the deployment and contains zero secrets
+- `render.yaml`: `GEMINI_API_KEY` uses **`sync: false`** ("exists, value lives in
+  the dashboard"); `DATABASE_URL` uses **`fromDatabase`** so Render injects the
+  managed connection string and it cannot drift.
+- `frontend/config.js` holds only a public URL — never a key. Anything in
+  `frontend/` is readable by every visitor.
 
-Two mechanisms make that possible, and both are deliberate:
-
-- `GEMINI_API_KEY` uses **`sync: false`** — "this variable exists, its value
-  lives only in the dashboard." The blueprint is committed; the key never is.
-- `DATABASE_URL` uses **`fromDatabase`** — Render injects the managed connection
-  string at deploy time. You never see it, never copy it, and it cannot drift
-  from the actual database.
-
-## Two kinds of secret, two files
+## Three kinds of secret, three files
 
 | File | Key | Who reads it |
 |---|---|---|
-| `.env` | `GEMINI_API_KEY` | The app, at runtime. **Gets uploaded to Render.** |
-| `.render.env` | `RENDER_API_KEY` | Only tooling. **Never deployed.** |
+| `.env` | `GEMINI_API_KEY` | The app at runtime. **Uploaded to Render.** |
+| `.render.env` | `RENDER_API_KEY` | Tooling only. Never deployed. |
+| `.vercel.env` | `VERCEL_TOKEN` | Tooling only. Never deployed. |
 
-`RENDER_API_KEY` creates, deletes, and bills resources across the whole account.
-It landed in `.env` once, was exposed, and had to be rotated. Putting it there
-uploads an account-wide admin key into the platform it controls.
+The control-plane keys create, delete and bill resources across whole accounts.
+`RENDER_API_KEY` landed in `.env` once, was exposed, and had to be rotated.
+**Deploy tokens are short-lived by design — revoke both once deployment is done.**
 
 ---
 
@@ -129,20 +159,18 @@ uploads an account-wide admin key into the platform it controls.
 Inherited from the course's `AGENTS.md`, and they hold here:
 
 - Simplicity over cleverness. The next reader must understand it in one pass.
-- No custom exception classes. `HTTPException(status_code=..., detail="...")` is
-  the whole error surface.
-- No `BaseSettings` / `pydantic-settings` / config classes. Three
-  `os.environ["..."]` reads at module load are clearer.
+- No custom exception classes. `HTTPException(status_code=..., detail="...")`.
+- No `BaseSettings` / `pydantic-settings` / config classes. `os.environ["..."]`
+  reads at module load are clearer.
 - No bare `except Exception` — catch the narrowest exception that names the
   failure (`httpx.HTTPError`, `psycopg.Error`).
 - No helper called from exactly one place. (`ask_gemini` earns its place: two
-  callers, and it removes a duplicated HTTP block.)
+  callers, removes a duplicated HTTP block.)
 - No logging framework. No tests in V1.
 - Comments explain *why*, never *what*.
 
-**Fail loudly on config.** `os.environ["GEMINI_API_KEY"]` uses bracket access on
-purpose. A missing variable is a `KeyError` at startup, not a confusing 500 an
-hour later. Do not "fix" this with `.get(..., default)`.
+**Fail loudly on config.** Bracket access on purpose — a missing variable is a
+`KeyError` at startup, not a confusing 500 an hour later. Never `.get(..., default)`.
 
 ---
 
@@ -150,163 +178,197 @@ hour later. Do not "fix" this with `.get(..., default)`.
 
 ## Killing uvicorn by port leaves orphaned workers still serving
 
-`uvicorn --reload` runs a reloader parent that spawns the real server through
-`multiprocessing.spawn`. **The worker's command line contains no "uvicorn"** — it
-reads `python -c "from multiprocessing.spawn import spawn_main; ..."`. So both of
-these miss it:
+`uvicorn --reload` spawns its real worker via `multiprocessing.spawn`, so **the
+worker's command line contains no "uvicorn"** — it reads
+`python -c "from multiprocessing.spawn import spawn_main; ..."`. Both of these
+miss it:
 
 ```powershell
 # WRONG - kills the listener; the parent respawns a replacement
 Get-NetTCPConnection -LocalPort 8000 | Stop-Process
 # WRONG - the worker's command line does not match "uvicorn"
-Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match "uvicorn" }
+... | Where-Object { $_.CommandLine -match "uvicorn" }
 ```
 
-The symptom is brutal: a **stale server keeps answering on port 8000** with old
-code. New routes 404, edits appear to do nothing, and the uvicorn log shows
-startup but *no access-log lines* — because requests are going elsewhere.
+Symptom: a **stale server answers with old code**. New routes 404, edits do
+nothing, and the uvicorn log shows startup but *no access-log lines*. It bit
+twice — the second time after deleting `app/templates/`, where the stale worker
+kept 500ing on templates that no longer existed.
 
-**Diagnose by asking the running app**, not by re-reading the file:
+**Diagnose by asking the running app**, never by re-reading the file:
 
 ```bash
 curl -s http://localhost:8000/openapi.json | python -c "import json,sys; print(sorted(json.load(sys.stdin)['paths']))"
 ```
 
-**Kill properly** — match spawn children too:
+**Kill properly:**
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-  Where-Object { $_.CommandLine -match "uvicorn|spawn_main" } |
+  Where-Object { $_.CommandLine -match "uvicorn|spawn_main|http.server" } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-Then confirm the port is free before restarting. A listening socket attributed to
-an already-dead PID means a child still holds the inherited handle.
+Then confirm the port is free. A listening socket owned by a dead PID means a
+child still holds the inherited handle.
+
+## Port 3000 is taken by Docker Desktop on this machine
+
+Held by `wslrelay.exe` and `com.docker.backend.exe`. **Do not kill them** — that
+breaks Docker, and Postgres with it. The frontend dev server uses **5500**:
+
+```bash
+python -m http.server 5500 --directory frontend --bind 127.0.0.1
+```
+
+`FRONTEND_ORIGINS` in `.env` must match that port exactly, scheme included.
 
 ## Windows blackholes closed ports — Postgres hangs forever
 
-`localhost` resolves to `::1` first on Windows. When nothing is listening the
-packet is **dropped, not refused** — so `psycopg.connect()`, which has no default
-timeout, waits indefinitely. `/healthz` hung with no entry in the uvicorn log.
+`localhost` resolves to `::1` first; a closed port **drops** the packet rather
+than refusing it, so `psycopg.connect()` — no default timeout — waits forever.
+`/healthz` hung with no log entry at all.
 
-`get_conn()` sets `connect_timeout=5`. **Do not remove it.** On Render this
-matters more: a hanging `/healthz` reads as "still starting" forever instead of
-"database is down".
+`get_conn()` sets `connect_timeout=5`. **Do not remove it.** On Render it matters
+more: a hanging `/healthz` reads as "still starting" rather than "database down".
+
+## Render's Python version: use `.python-version`, not `PYTHON_VERSION`
+
+Render's default is now **3.14.3** (services created after 11 Feb 2026), which
+the course tooling does not support. Two mechanisms, and they differ:
+
+- `PYTHON_VERSION` env var — demands a **fully qualified** patch (`3.13.5`).
+  Breaks whenever that exact patch is unavailable.
+- **`.python-version` file** — accepts `3.13` and takes the latest patch. ✅ used here.
 
 ## `python scripts/foo.py` → `ModuleNotFoundError: No module named 'app'`
 
-Running a script by path puts `scripts/` on `sys.path`, not the project root.
-Use `python -m scripts.smoke_gemini` from the project root — `-m` puts the
-current directory on the path. (`uvicorn app.main:app` works for the same reason.)
+Running by path puts `scripts/` on `sys.path`, not the project root. Use
+`python -m scripts.smoke_gemini` from the root — `-m` adds the cwd.
 
 ## `load_dotenv()` resolves relative to the calling file, not the shell's cwd
 
-A throwaway script in a temp folder found no `.env` and died with `KeyError`,
-even though the shell was `cd`'d into the project. For scripts outside the
-project tree, pass the path explicitly.
+A script in a temp folder found no `.env` and died with `KeyError` despite the
+shell being `cd`'d into the project. Pass the path explicitly for outside scripts.
 
-## `load_dotenv()` must run before the imports that read `os.environ`
-
-`app/main.py` calls it on line 3, above the service imports, and those imports
-sit below it deliberately. Services read `os.environ[...]` **at module load**, so
-moving them above `load_dotenv()` breaks startup. Ignore any linter that wants to
-tidy the import order here.
+It must also run **before** the imports that read `os.environ` at module load —
+which is why `app/main.py` has its imports below line 3. Ignore linters that want
+to tidy that.
 
 ## Verify `.gitignore` with git, not by reading it
 
-Reading the file proves nothing. This does:
-
 ```bash
-git check-ignore -v .env .render.env venv/
-git add -A && git diff --cached --name-only    # what would actually be committed
+git check-ignore -v .env .render.env .vercel.env venv/
+git ls-tree -r origin/master --name-only | grep -cE '\.env$|\.render\.env|\.vercel\.env'
 ```
 
-Confirmed on 8 Aug 2026: `.env` (rule line 1), `.render.env` (line 3), `venv/`
-(line 4) all excluded; 21 files staged, zero secrets among them.
+## Secret scanners: match key *shape*, not prefixes
 
-## Render API keys: length is the tell
-
-~32–40 characters. A **20-character** key is a truncated paste and returns
-`401 {"message":"Unauthorized"}` — the message does not say "truncated", so check
-the length first. Current key verified: 32 chars, owner
-`tea-csps46i3esus73eojjp0` (Simon Raj's Workspace).
-
-## Gemini API keys no longer start with `AIza`
-
-This key starts with `AQ.A` and is 53 characters. The course docs
-(`module5-readiness-checklist.md` §8) say `AIza...` — outdated, not a problem.
-Both `?key=<KEY>` and the `x-goog-api-key` header work. We use the header.
-
-## Gemini 3.x spends heavily on hidden thinking
-
-A one-sentence request billed `thoughtsTokenCount: 428` against
-`candidatesTokenCount: 38` — over 90% of output tokens invisible. Chat is ~2.5s;
-a ~185-word story is ~6–8s. If that needs to be faster, this is where the time
-goes.
-
-## Response shape
-
-`candidates[0].content.parts[0].text`. Parts may also carry `thoughtSignature`;
-`finishReason: "STOP"` is the success case.
-
-## Windows hides file extensions
-
-The API key first arrived in `.env.txt`, not `.env` — `python-dotenv` would never
-have found it. If a variable is mysteriously missing, check for a trailing `.txt`.
-
-## PowerShell here-strings mangle quotes in inline Python
-
-`python -c @'...'@` silently stripped the quotes from a URL and produced a
-`SyntaxError`. Write the script to a file and run the file.
-
-## Git on Windows rewrites line endings
-
-`git add` warns `LF will be replaced by CRLF` on every text file. Harmless here —
-there are no shell scripts. **If a `.sh` is ever added**, commit a
-`.gitattributes` with `*.sh text eol=lf` first, or it will fail on Render's Linux
-containers with `bad interpreter`.
-
-## Postgres is not installed natively on this machine
-
-`C:\Program Files\PostgreSQL\16` contains **only pgAdmin** — no `bin/`, no
-`psql.exe`, no server service. Postgres runs in Docker:
+Scanning for `AQ\.A` and `rnd_` flagged `CLAUDE.md` — because it *documents* what
+those prefixes are. A scanner that cries wolf on prose gets ignored, and an
+ignored scanner catches nothing. Match length and character class instead:
 
 ```bash
-docker start ai-apps-pg
+git grep -nIE 'AQ\.[A-Za-z0-9_-]{20,}|rnd_[A-Za-z0-9]{20,}|vcp_[A-Za-z0-9]{20,}'
 ```
 
-Database `ai_apps` holds both tables. Data survives `docker stop`/`start`; it is
-lost only on `docker rm`.
+## Silence is not a passing test
 
-## Render free tier, before you deploy
+`git ls-tree | grep | sed` returns **sed's** exit code, so `|| echo "PASS"` can
+never fire. The check printed nothing and looked like it passed. Count matches
+and assert on the number.
 
-- Free **Postgres expires 30 days after creation** — create it near launch.
-- Free **web services sleep after 15 minutes** idle; the next request takes
-  30–60s. Not a bug.
-- Blueprint deploys read `render.yaml` **from a Git repo** — it must be pushed to
-  GitHub first. A local commit is not enough.
+## Credential formats and quirks
+
+| Key | Prefix | Length | Notes |
+|---|---|---|---|
+| Gemini | `AQ.A` | 53 | Course docs say `AIza` — outdated. `?key=` and `x-goog-api-key` both work; we use the header. |
+| Render | `rnd_` | ~32–40 | A 20-char one is a truncated paste → bare `401 Unauthorized`, which does not say "truncated". |
+| Vercel | `vcp_` | 60 | Shown **once** at creation. |
+
+**Vercel token scope:** must be **All Projects** under the team. A token scoped to
+one existing project cannot *create* a new project.
+
+## Vercel cannot see a private GitHub repo by default
+
+`POST /v11/projects` with `gitRepository` fails:
+
+```
+400 repo_not_found - The repository "..." couldn't be found.
+```
+
+The repo exists; Vercel's GitHub App lacks access. Fix at
+<https://github.com/settings/installations> → Vercel → Configure → add the repo.
+Or make the repo public. Creating the project *without* `gitRepository` works and
+can be linked afterwards.
+
+## Vercel API notes
+
+- `POST https://api.vercel.com/v11/projects?teamId=<team>` — `teamId` is required
+  for team-owned projects, as a **query parameter**.
+- The dashboard's renderer intermittently times out under CDP screenshot
+  automation; retry once, then fall back to doing it by hand.
+
+## `pip list --outdated` lies about transitive pins
+
+It reported `starlette 1.4.1` available while FastAPI 0.141 constrains it to
+0.46.2. Upgrade the direct dependency and let it resolve; do not chase transitives.
+
+The FastAPI **0.115 → 0.141** jump was verified safe: every route, both apps, and
+all error paths still pass.
+
+## Windows odds and ends
+
+- **Hidden extensions.** The API key first arrived as `.env.txt`; `python-dotenv`
+  would never have found it. If a variable is mysteriously missing, look for `.txt`.
+- **PowerShell here-strings mangle quotes** in `python -c @'...'@` — it silently
+  stripped quotes from a URL and produced a `SyntaxError`. Write a file instead.
+- **Git rewrites line endings** (`LF will be replaced by CRLF`). Harmless — there
+  are no shell scripts. If a `.sh` is ever added, commit `.gitattributes` with
+  `*.sh text eol=lf` first, or it fails on Render's Linux containers.
+- **Postgres is not installed natively.** `C:\Program Files\PostgreSQL\16`
+  contains **only pgAdmin** — no `bin/`, no server. Use Docker:
+  `docker start ai-apps-pg`. Data survives stop/start; lost only on `docker rm`.
+
+## Render free tier
+
+- Postgres **expires 30 days after creation** — create it at deploy time.
+- Web services **sleep after 15 minutes** idle; next request takes 30–60s.
+- Blueprints read `render.yaml` **from a GitHub repo** — a local commit is not
+  enough; it must be pushed, and Render must have access.
 
 ---
 
 # Verifying
 
 ```bash
-curl http://localhost:8000/healthz     # {"gemini":true,"postgres":true}
-python -m scripts.smoke_gemini         # both apps, Gemini only, no database
+# backend
+curl http://localhost:8000/healthz          # {"gemini":true,"postgres":true}
+python -m scripts.smoke_gemini              # both apps, no database
 
+# frontend (separate origin, on purpose)
+python -m http.server 5500 --directory frontend --bind 127.0.0.1
+
+# CORS, allowed vs disallowed
+curl -i -X OPTIONS http://localhost:8000/ask -H "Origin: http://localhost:5500" \
+  -H "Access-Control-Request-Method: POST"   # 200 + access-control-allow-origin
+curl -i -X OPTIONS http://localhost:8000/ask -H "Origin: https://evil.example.com" \
+  -H "Access-Control-Request-Method: POST"   # 400, no allow-origin
+
+# data
 docker exec ai-apps-pg psql -U postgres -d ai_apps \
   -c "SELECT id, question, created_at FROM interactions ORDER BY id DESC;"
 ```
 
-`/healthz` reports each dependency separately on purpose — it tells you *which*
-half is broken. Keep it that way. Note it always returns **200**; it is a
-diagnostic, not a gate.
+`/healthz` reports each dependency separately on purpose. It always returns
+**200** — a diagnostic, not a gate.
 
-# Current state — all verified 8 Aug 2026
+# Current state — verified 8 Aug 2026
 
-`/` `/chat` `/bedtime` `/static/style.css` → 200 · `/healthz` →
-`{"gemini":true,"postgres":true}` · `POST /ask` → 200, row in `interactions` ·
-`POST /story` → 200, row in `stories` · blank input → 400 · malformed body → 422 ·
-5 real conversations persisted from browser use · Render start command tested on
-`0.0.0.0` · Render API key verified · git repo initialised, **staged not
-committed**.
+Backend API-only and passing (`/` `/ask` `/history` `/story` `/stories`
+`/healthz`); frontend static on `:5500`; CORS correct both ways; real
+cross-origin `POST /ask` → 200; blank input → 400; malformed body → 422;
+dependencies upgraded and re-verified; pushed to GitHub with zero secrets; Render
+and Vercel tokens verified; Vercel project created.
+
+**Not yet done:** Vercel↔GitHub link, Render deploy, and the two-pass URL wiring.
