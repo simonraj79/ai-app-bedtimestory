@@ -70,12 +70,13 @@
       }
       emptyEl.hidden = true;
 
-      // readingTime handles the minutes; a total in seconds would make the
-      // reader do the division on the one number most likely to be large.
+      // The tiles hold single scannable numbers. Read-aloud time is a phrase -
+      // "6 min 28 s" - and in a 1.6rem tile it wrapped onto two lines, leaving
+      // that tile taller than the ones beside it. It reads better in the
+      // sentence below, where the other qualifiers already live.
       const tiles = [
         [d.stories, d.stories === 1 ? "story" : "stories"],
         [d.words.toLocaleString(), "words"],
-        [readingTime(d.reading_seconds), "read aloud"],
       ];
       if (d.avg_words !== null && d.avg_words !== undefined) {
         tiles.push([d.avg_words, "words each"]);
@@ -91,6 +92,9 @@
         bits.push(d.first_story === d.last_story
           ? `All on ${escapeHtml(d.first_story)}`
           : `From ${escapeHtml(d.first_story)} to ${escapeHtml(d.last_story)}`);
+      }
+      if (d.reading_seconds) {
+        bits.push(`${escapeHtml(readingTime(d.reading_seconds))} to read aloud`);
       }
       if (d.avg_grade !== null && d.avg_grade !== undefined) {
         bits.push(`usually ${escapeHtml(readingBand(d.avg_grade))}`);
