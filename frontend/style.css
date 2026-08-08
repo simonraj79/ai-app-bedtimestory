@@ -551,6 +551,32 @@ th {
     text-align: right;
 }
 
+/* The daily bar is decoration for the number beside it, not the data itself -
+   it exists so the shape of a fortnight is readable at a glance. It takes the
+   slack in the row so the counts keep their own columns. */
+.bar-h {
+    width: 40%;
+    padding-left: 0.8rem;
+}
+
+.bar {
+    display: block;
+    height: 6px;
+    min-width: 2px;
+    border-radius: 3px;
+    background: #4f7cf7;
+}
+
+/* A day with nothing on it should read as absence, not as a row that failed
+   to load. */
+.quiet {
+    opacity: 0.45;
+}
+
+.quiet .bar {
+    background: #2a3040;
+}
+
 .who {
     display: block;
     color: #e6e8ee;

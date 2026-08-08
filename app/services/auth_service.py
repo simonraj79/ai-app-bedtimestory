@@ -81,6 +81,17 @@ def current_user(request: Request) -> CurrentUser:
                     ),
                 )
                 row = cur.fetchone()
+
+                # Runs on every authenticated request, but only the first
+                # request carrying a given token inserts: token_iat is fixed
+                # for the token's life, and (user_id, token_iat) is UNIQUE. So
+                # this counts sign-ins, not requests, without the caller having
+                # to know which of its calls is the first.
+                cur.execute(
+                    "INSERT INTO sign_ins (user_id, token_iat) VALUES (%s, %s) "
+                    "ON CONFLICT (user_id, token_iat) DO NOTHING",
+                    (row["id"], claims["iat"]),
+                )
             conn.commit()
             return CurrentUser(**row)
     except psycopg.Error:

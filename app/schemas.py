@@ -54,6 +54,7 @@ class CurrentUser(BaseModel):
 
 class UsageTotals(BaseModel):
     users: int
+    sign_ins: int
     stories: int
     questions: int
 
@@ -64,8 +65,17 @@ class UsageUser(BaseModel):
     name: str
     created_at: str
     last_seen_at: str
+    sign_ins: int
     stories: int
     questions: int
+
+
+class UsageDay(BaseModel):
+    day: str
+    sign_ins: int
+    stories: int
+    questions: int
+    people: int  # distinct people active that day, not a sum of the above
 
 
 class UsageAction(BaseModel):
@@ -78,4 +88,5 @@ class UsageAction(BaseModel):
 class UsageResponse(BaseModel):
     totals: UsageTotals
     users: list[UsageUser]
+    daily: list[UsageDay]
     recent: list[UsageAction]

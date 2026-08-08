@@ -28,11 +28,21 @@
     <div id="usage" hidden>
         <div class="stats" id="totals"></div>
 
+        <h2>Last 14 days</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Day</th><th class="num">People</th><th class="num">Sign-ins</th><th class="num">Stories</th><th class="num">Questions</th><th class="bar-h"></th></tr>
+                </thead>
+                <tbody id="daily"></tbody>
+            </table>
+        </div>
+
         <h2>People</h2>
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Who</th><th class="num">Stories</th><th class="num">Questions</th><th>Last seen</th></tr>
+                    <tr><th>Who</th><th class="num">Sign-ins</th><th class="num">Stories</th><th class="num">Questions</th><th>Last seen</th></tr>
                 </thead>
                 <tbody id="users"></tbody>
             </table>
@@ -53,6 +63,7 @@
     function renderUsage(data) {
       $("totals").innerHTML = [
         [data.totals.users, "people"],
+        [data.totals.sign_ins, "sign-ins"],
         [data.totals.stories, "stories"],
         [data.totals.questions, "questions"],
       ].map(([n, k]) => `
@@ -64,6 +75,24 @@
       // name and last_seen_at are the two columns that can legitimately be
       // empty; escapeHtml calls .replace, so a null would throw and take the
       // whole page down rather than leaving one blank cell.
+      // Bars are scaled against the busiest day in the window, not a fixed
+      // maximum: a quiet fortnight should still show its own shape rather than
+      // fourteen invisible slivers.
+      const busiest = Math.max(1, ...data.daily.map(d => d.sign_ins + d.stories + d.questions));
+      $("daily").innerHTML = data.daily.map(d => {
+        const total = d.sign_ins + d.stories + d.questions;
+        const pct = Math.round((total / busiest) * 100);
+        return `
+        <tr${total ? "" : ' class="quiet"'}>
+          <td class="when">${escapeHtml(d.day)}</td>
+          <td class="num">${escapeHtml(String(d.people))}</td>
+          <td class="num">${escapeHtml(String(d.sign_ins))}</td>
+          <td class="num">${escapeHtml(String(d.stories))}</td>
+          <td class="num">${escapeHtml(String(d.questions))}</td>
+          <td class="bar-h"><span class="bar" style="width:${pct}%"></span></td>
+        </tr>`;
+      }).join("");
+
       $("users").innerHTML = data.users.map(u => `
         <tr>
           <td>
@@ -71,6 +100,7 @@
             <span class="mail">${escapeHtml(u.email)}</span>
             <span class="joined">joined ${escapeHtml(u.created_at)}</span>
           </td>
+          <td class="num">${escapeHtml(String(u.sign_ins))}</td>
           <td class="num">${escapeHtml(String(u.stories))}</td>
           <td class="num">${escapeHtml(String(u.questions))}</td>
           <td class="when">${escapeHtml(u.last_seen_at || "—")}</td>
