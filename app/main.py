@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Must run BEFORE importing modules that read os.environ at load time.
 
 import os
+import time
 
 import httpx
 import psycopg
@@ -26,7 +27,10 @@ from app.services.story_service import save_story, fetch_recent_stories, fetch_m
 # cross-origin. Only these origins may do so.
 FRONTEND_ORIGINS = os.environ["FRONTEND_ORIGINS"].split(",")
 
-app = FastAPI(title="AI Apps API")
+# No /docs, /redoc or /openapi.json: this API serves two known frontends, not
+# third-party integrators, so a public route catalog is recon surface with no
+# reader.
+app = FastAPI(title="AI Apps API", docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,8 +111,18 @@ def admin_usage():
 
 # --- Shared ------------------------------------------------------------------
 
+# /healthz must stay unauthenticated - it is what reports auth's own
+# dependencies being down - so every hit is an outbound Gemini call anyone can
+# trigger in a loop. Caching the answer for 60 seconds closes that: the
+# staleness is invisible to a human retrying, and the hub page only calls it
+# once per load.
+_healthz_cache = {"at": 0.0, "status": None}
+
+
 @app.get("/healthz")
 def healthz():
+    if _healthz_cache["status"] is not None and time.monotonic() - _healthz_cache["at"] < 60:
+        return _healthz_cache["status"]
     status = {"gemini": False, "postgres": False}
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -126,4 +140,6 @@ def healthz():
         status["postgres"] = True
     except psycopg.Error:
         pass
+    _healthz_cache["at"] = time.monotonic()
+    _healthz_cache["status"] = status
     return status

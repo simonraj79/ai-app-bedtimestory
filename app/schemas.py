@@ -1,10 +1,16 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# The max_length caps on the request models exist because every accepted
+# character is paid for twice: unbounded input is unbounded Gemini tokens, and
+# a long field is also the room a prompt-injection payload needs to argue with
+# the system prompt. The auth dependency still runs before body validation, so
+# unauthenticated oversized junk 401s without ever reaching these limits.
 
 
 # --- App 1: Chat -------------------------------------------------------------
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=2000)
 
 
 class Interaction(BaseModel):
@@ -23,8 +29,8 @@ class AskResponse(BaseModel):
 # --- App 2: Bedtime Story ----------------------------------------------------
 
 class StoryRequest(BaseModel):
-    child_name: str
-    theme: str
+    child_name: str = Field(max_length=60)
+    theme: str = Field(max_length=200)
     length: str = "medium"  # Defaulted so older clients keep working.
 
 
