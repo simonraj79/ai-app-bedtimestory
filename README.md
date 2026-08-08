@@ -68,21 +68,23 @@ app/                       backend - API only, no HTML
   services/
     gemini_service.py      the only file that talks to Gemini
     auth_service.py        the only file that talks to Google identity
+    text_stats.py          stdlib only - counts, Flesch scores, genre lexicon
     chat_service.py        save_interaction / fetch_recent_history
-    story_service.py       save_story / fetch_recent_stories
-    admin_service.py       fetch_usage - totals, per-person counts, 14-day series, recent feed
+    story_service.py       save_story / fetch_recent_stories / fetch_my_stats
+    admin_service.py       fetch_usage - totals, per-person counts, 14-day series, genres, recent feed
 frontend/                  frontend - static, deploys to Vercel
-  index.html               hub - no sign-in, cards + How it works
+  index.html               hub - no sign-in, three cards + How it works
   chat.html  story.html    the two apps - sign-in lives here
-  mystats.html             the reader's own totals, linked from story.html
+  mystats.html             the reader's own totals and charts
   admin.html               owner-only usage, not linked from the hub
-  config.js                BACKEND_URL + escapeHtml + the sign-in client
+  config.js                BACKEND_URL + escapeHtml + sign-in + readingBand/readingTime
   style.css
 sql/001_create_interactions.sql
 sql/002_create_stories.sql
 sql/003_create_users.sql       one row per Google account, keyed on google_sub
 sql/004_add_user_id.sql        nullable user_id on both tables + indexes
 sql/005_create_sign_ins.sql    one row per actual sign-in, deduped on token_iat
+sql/006_add_story_stats.sql    nullable word/sentence/level/genre columns on stories
 scripts/smoke_gemini.py    exercises both apps without touching the database
 render.yaml  Procfile      Render deploy
 vercel.json  .vercelignore Vercel deploy
@@ -194,14 +196,29 @@ Data survives `docker stop`/`start`; lost only on `docker rm`.
 Two views. Both need a signed-in caller; each shows only what that caller is
 entitled to see.
 
-**Your story stats** — `mystats.html`. Reached from a card on the hub and from
-the auth bar on the story page. Anyone signed in
-gets their own totals: stories, words, read-aloud time, average length and
-reading level, who each story was for, and what they were about.
+**Your story stats** — `mystats.html`. Reached from a card on the hub and from a
+chip in the story page's auth bar. Anyone signed in gets their own numbers, and
+only their own — every query filters on the `user_id` from the verified token
+and takes no parameter that could widen it.
 
-**Usage** — `admin.html`, restricted to `ADMIN_EMAIL`. Not linked from the hub;
-bookmark it. Anyone else who finds the URL gets `403` — the gate is on the
-server, so the missing link is tidiness rather than security.
+| | |
+|---|---|
+| Tiles | stories · words · words each |
+| Story length | column chart, one per story, oldest first — with a collapsed table twin so no value needs a hover |
+| Reading level | meter, the average against an easier→harder scale |
+| Who they were for | horizontal bars per child |
+| What they were about | horizontal bars per genre |
+
+Charts are hand-written inline SVG — no chart library, no build step. One mark
+colour throughout, because genre and child names are nominal: colouring each bar
+separately would re-encode what bar length already shows. Design notes and the
+measured contrast figures are in `CLAUDE.md` → *Charts*.
+
+**Usage** — `admin.html`, restricted to `ADMIN_EMAIL`. Not linked from the hub.
+The owner reaches it from a link on their own stats page, shown only when the
+server sets `is_admin` on `/me/stats` — the browser never decides this for itself,
+because it can decode a token but not verify one. Anyone else who finds the URL
+gets `403`.
 
 | | |
 |---|---|

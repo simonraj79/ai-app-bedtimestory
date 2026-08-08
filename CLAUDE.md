@@ -13,7 +13,8 @@ cross-origin. **Google sign-in is required to generate anything.**
 |---|---|---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | `POST /ask` · `GET /history` | `interactions` | any signed-in user |
 | 2 | 🌙 Bedtime Story | `story.html` | `POST /story` · `GET /stories` | `stories` | any signed-in user |
-| — | 📊 Usage | `admin.html` | `GET /admin/usage` | reads all three | `ADMIN_EMAIL` only |
+| — | 📖 Your story stats | `mystats.html` | `GET /me/stats` | `stories`, own rows | any signed-in user |
+| — | 📊 Usage | `admin.html` | `GET /admin/usage` | reads all four | `ADMIN_EMAIL` only |
 
 `GET /` and `GET /healthz` are the only open routes. Everything else needs
 `Authorization: Bearer <google-id-token>`, and history is **per user**.
@@ -26,7 +27,7 @@ Browser ──(static)──►┤ Vercel: frontend/
    └──(fetch, CORS, Authorization: Bearer <jwt>)──► Render: FastAPI
                           ├──httpx───────► Gemini API
                           ├──google-auth─► Google certs (verify the signature)
-                          └──psycopg────► Postgres (one DB, three tables)
+                          └──psycopg────► Postgres (one DB, four tables)
 ```
 
 **This folder supersedes `D:\SINGLE TURN CHAT`.** Everything lives here.
@@ -41,21 +42,25 @@ app/                       the backend - API only, no HTML
   services/
     gemini_service.py      the ONLY file that knows the model provider
     auth_service.py        the ONLY file that knows the identity provider
+    text_stats.py          stdlib only - counts, Flesch scores, genre lexicon
     chat_service.py        save_interaction / fetch_recent_history
-    story_service.py       save_story / fetch_recent_stories
-    admin_service.py       fetch_usage - totals, per-person counts, recent feed
+    story_service.py       save_story / fetch_recent_stories / fetch_my_stats
+    admin_service.py       fetch_usage - totals, per-person, 14 days, genres, feed
 frontend/                  the frontend - deployed to Vercel, static only
-  index.html               hub
+  index.html               hub - no sign-in, three cards + How it works
   chat.html                app 1
-  story.html               app 2
+  story.html               app 2 - the stats chip lives in its auth bar
+  mystats.html             one reader's own numbers, with the charts
   admin.html               usage - NOT linked from the hub, owner only
-  config.js                BACKEND_URL + escapeHtml + the whole sign-in client
+  config.js                BACKEND_URL + escapeHtml + sign-in + readingBand/Time
   style.css                body.bedtime overrides the palette
 sql/
   001_create_interactions.sql
   002_create_stories.sql
   003_create_users.sql     one row per Google account, keyed on google_sub
   004_add_user_id.sql      nullable user_id on both tables + (user_id, id DESC)
+  005_create_sign_ins.sql  one row per sign-in, deduped on the token's iat
+  006_add_story_stats.sql  nullable word/sentence/level/genre columns on stories
 scripts/smoke_gemini.py    exercises both apps, no database involved
 render.yaml                Render Blueprint (web service + free Postgres)
 Procfile                   Render start command
@@ -340,6 +345,63 @@ Choices that look cosmetic but are not:
 `app/services/gemini_service.py` do more to shape output than any code. Child
 safety for app 2 lives entirely in its prompt — if illustrations are ever added,
 they need their own pass, because image models do not inherit it.
+
+**The prompt also leaks into the data.** `STORY_SYSTEM_PROMPT` ends every story
+with the child falling asleep, which made the first genre classifier useless —
+see *A signal in 100% of rows is not a signal* below. Changing a prompt changes
+what every downstream measurement sees.
+
+## Story statistics, on the standard library alone
+
+Flesch Reading Ease and Flesch–Kincaid grade are arithmetic over words, sentences
+and syllables. No `textstat`, no `nltk`, nothing in `requirements.txt` — `re` and
+a vowel-group heuristic cover it. `app/services/text_stats.py` owns all of it and
+is the only file that would change if the measures did.
+
+Two choices in there worth keeping:
+
+**Read-aloud, not silent reading.** 130 wpm, not the ~230 the standard tooling
+assumes. This app exists to be read *to* a child, and at the silent rate a
+211-word story reports 55s instead of 97s. That number was later confirmed by
+accident: Gemini's TTS synthesised the same story to **99 seconds** against the
+**96** predicted. 3% out.
+
+**`reading_ease` is clamped 0–100, `grade_level` is not.** A score outside its own
+advertised range reads as a bug; a negative grade is a real reading — "easier than
+the scale goes" — and flooring it would make an easy story and a very easy one
+look identical.
+
+The UI says **"age 9 to read alone"**, never "about age 9". These stories target a
+five-year-old by design and still score grade 3–4, because the formula counts
+syllables and sentence length, not whether a child follows the story. A parent of
+a four-year-old reading "about age 9" on tonight's story would reasonably conclude
+it was wrong for them.
+
+## ⭐ A signal in 100% of rows is not a signal
+
+The genre classifier took three passes, and only real data exposed why.
+
+| Pass | Result over the 7 real stories |
+|---|---|
+| Lexicon incl. a "Bedtime" category | **7 of 7 → Bedtime.** Useless |
+| Bedtime removed from scoring | 3 genres, but *"a rabbit with a very soft blanket"* → **Space** |
+| Theme weighted ×3 | rabbit / turtle / fox → **Animals**. Shipped |
+
+Pass 1 failed because `STORY_SYSTEM_PROMPT` guarantees bed / sleepy / cozy /
+tucked in **every** story, so those words swamped the ones that say what a story
+is about. **A feature present in 100% of items carries no information** — Bedtime
+was the constant, not a genre. It now has no lexicon at all and survives only as
+the label for "nothing matched".
+
+Pass 2 failed differently: scenery outvotes the protagonist because there is far
+more of it. The fix was to weight the **theme the reader typed** — the one thing
+that is definitionally about the subject — at `THEME_WEIGHT = 3`. Not "theme wins
+outright": *"a lantern that guides fireflies home"* matches `home` (Family), and
+the story text correctly keeps it in Nature.
+
+The reusable part: **the agent's own sample stories all passed.** Running the
+classifier over the real table was what exposed it, in one command. Test a
+classifier on the corpus it will actually see.
 
 ## Committed config, zero secrets
 
@@ -969,6 +1031,56 @@ Timings observed: Postgres ~70s from `creating` to `available`; the web service
   from what it actually returns, or CORS silently blocks the whole frontend.
 - The dashboard's renderer intermittently times out under CDP screenshot
   automation; retry once, then fall back to doing it by hand.
+
+## Charts: a scaled `viewBox` multiplies the text too
+
+The first version of the story-length chart drew 14px bars and 9px axis labels
+into a `viewBox` sized to convenient numbers, then let CSS stretch it to the
+column with `width:100%`. Everything inside scaled by the same 1.7× — so it
+rendered as 24px bars under **16px axis text that shouted over the data**, which
+is two documented anti-patterns at once (thick saturated blocks; chrome louder
+than the data).
+
+`viewBox` scaling is not a font-size exemption. Either build the `viewBox` to the
+container's real pixel width — which is what this does now, reading
+`host.clientWidth` — or keep the text out of the SVG entirely. The "oldest /
+newest" labels are plain HTML underneath for exactly that reason.
+
+A pixel-true `viewBox` cannot rescale itself, so it redraws on `resize`.
+
+### Values reachable only by hovering are not reachable
+
+Only the tallest column is labelled — a number on every bar is chaos and goes
+unread. But that left every other value in a `<title>` tooltip, and **a value you
+can only get to with a mouse does not exist on a phone, to a screen reader, or
+from a keyboard.** Every chart needs its table twin; `mystats.html` has a
+collapsed *See the numbers* table under the chart.
+
+### One hue, because the categories are nominal
+
+Genre and a child's name have no natural order — reordering them changes nothing
+— so every bar takes the **same** colour. Colouring them individually spends the
+identity channel re-encoding what bar length already shows, and is a named
+anti-pattern ("a value-ramp on nominal categories").
+
+Contrast was computed, not eyeballed. On the bedtime surface `#131a2c`:
+
+| | measured | needs |
+|---|---|---|
+| gold mark `#e5c98a` | **10.77:1** | 3:1 |
+| axis text `#8f9bb8` | 6.23:1 | 4.5:1 |
+| gridline `#2a3450` | 1.41:1 | recessive by design |
+
+## The browser must not decide who the admin is
+
+`/me/stats` returns `is_admin`, computed on the server from the verified token's
+email — the same comparison that gates `/admin/usage`.
+
+`config.js` can **decode** a JWT but cannot **verify** one, so a forged payload
+would show the link to anyone. It only draws a link either way and the `403` does
+the enforcing — but the flag should still come from the only party that knows.
+The same rule is why `decodeJwtPayload` carries a comment saying never to branch
+on it for permission.
 
 ## CSS specificity beats source order — `body.bedtime button` painted everything gold
 
