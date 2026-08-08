@@ -69,9 +69,14 @@ vercel.json                deploy frontend/ as static
 | Vercel project | `prj_IRlDJCZYjQNittWSAbm8cKJWle2O` (`ai-app-bedtimestory`) |
 | Local Postgres | Docker container `ai-apps-pg`, database `ai_apps` |
 
-**Vercel auto-deploy is NOT wired.** The frontend was uploaded directly via the
-API because Vercel's GitHub App cannot see the private repo — so `git push`
-redeploys Render but **not** Vercel. See the gotcha below.
+**Vercel auto-deploy is NOT wired** (re-verified 8 Aug 2026 — `link: null`, and
+the only deployment is a direct upload with no `githubCommitSha`). The frontend
+was uploaded via the API because Vercel's GitHub App cannot see the private repo,
+so **`git push` redeploys Render but not Vercel**. See the gotcha below for the
+precise diagnosis and the two API checks that confirm it.
+
+Until it is linked, redeploy the frontend with the upload script — it takes
+seconds and is the only way a frontend change reaches production.
 
 ---
 
@@ -365,10 +370,45 @@ Migrations run through `psycopg` directly — there is no `psql` on this machine
 400 repo_not_found - The repository "..." couldn't be found.
 ```
 
-The repo exists; Vercel's GitHub App lacks access. Fix at
-<https://github.com/settings/installations> → Vercel → Configure → add the repo.
-Or make the repo public. Creating the project *without* `gitRepository` works and
-can be linked afterwards.
+The repo exists and the token is valid — Vercel's GitHub App simply cannot see
+that repo. Creating the project *without* `gitRepository` works, and it can be
+linked later with `POST /v9/projects/<name>/link`.
+
+**`repo_not_found` is ambiguous** — it means the same thing whether the App is
+not installed at all, or installed but not granted this repo. Two checks
+distinguish them:
+
+```bash
+# Does ANY project link successfully? If yes, the App IS installed.
+curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+  "https://api.vercel.com/v9/projects?teamId=$TEAM&limit=30" | ...
+```
+
+On this account `ai-chatgpt-dko6` is linked to `simonraj79/ai-chatgpt`, which
+**proves the App is installed** — so the failure is repository *access*, not
+installation. The dashboard's "Install the GitHub App" prompt is misleading in
+that state.
+
+Fix: <https://github.com/settings/installations> → Vercel → Configure →
+*Repository access* → add the repo → **Save**. Granting it in GitHub and
+connecting the project in Vercel are **two separate steps**; doing the first does
+not do the second.
+
+**Making the repo public does NOT fix this.** Vercel needs the App installed for
+**webhooks** — that is what turns a push into a deploy. Public visibility solves
+*reading* the code; the App solves *being told it changed*. Only the second gives
+auto-deploy.
+
+**Verify, never assume.** After any attempt, confirm with:
+
+```bash
+curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+  "https://api.vercel.com/v9/projects/ai-app-bedtimestory?teamId=$TEAM"   # link: null?
+curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+  "https://api.vercel.com/v6/deployments?projectId=<id>&teamId=$TEAM"     # any githubCommitSha?
+```
+
+A deployment with no `meta.githubCommitSha` came from a direct upload, not Git.
 
 **Workaround actually used:** direct file upload, no Git involved —
 `POST /v13/deployments?teamId=<team>&forceNew=1` with

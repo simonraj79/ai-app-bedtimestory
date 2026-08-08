@@ -12,7 +12,25 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 earlier exchanges — the saved history is for *you* to read back, not context fed
 into the prompt.
 
-**Status:** working locally, verified end to end. Not yet deployed.
+## 🚀 Live
+
+| | |
+|---|---|
+| **App** | <https://ai-app-bedtimestory.vercel.app> |
+| **API** | <https://ai-app-bedtimestory.onrender.com> |
+| Health | <https://ai-app-bedtimestory.onrender.com/healthz> |
+
+Deployed 8 August 2026 and verified in a real browser: both apps answer, both
+persist to Postgres, CORS allows the Vercel origin and refuses others.
+
+> **⚠️ The free Postgres expires 2026-09-07.** After that `/healthz` reports
+> `postgres: false` and writes fail.
+>
+> **⚠️ Vercel is not linked to GitHub.** `git push` redeploys the **backend
+> only**. Frontend changes need a manual upload — see *Deploying* below.
+>
+> **⏳ First request after 15 minutes idle takes 30–60s** — Render's free tier
+> sleeps. The page loads instantly (CDN); only the first API call waits.
 
 ## Architecture
 
@@ -172,18 +190,51 @@ deploying is finished.
 
 ## Deploying
 
+### Backend — automatic ✅
+
+`git push origin master` redeploys Render. Nothing else to do.
+
+### Frontend — manual, until Vercel is linked ⚠️
+
+Vercel's GitHub App cannot see this private repo, so pushes do **not** redeploy
+the frontend. Upload it directly instead:
+
+```powershell
+python scripts\deploy_frontend.py
+```
+
+**To fix it properly** (then pushes deploy both halves):
+<https://github.com/settings/installations> → **Vercel** → **Configure** →
+*Repository access* → add `ai-app-bedtimestory` → **Save**. Then connect the
+project in Vercel → Project → Settings → Git.
+
+Those are **two separate steps** — granting access in GitHub does not connect the
+project in Vercel. Confirm it actually worked:
+
+```bash
+curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+  "https://api.vercel.com/v9/projects/ai-app-bedtimestory?teamId=$TEAM"
+# "link" must be an object, not null
+```
+
+Making the repo public will **not** fix it — Vercel needs the App for webhooks,
+which is what turns a push into a deploy.
+
+### If you ever rebuild from scratch
+
 ⚠️ **Circular dependency.** The frontend needs the backend's URL; the backend's
 CORS needs the frontend's URL. Neither exists first, so it takes two passes:
 
-1. **Render** — Blueprint from the GitHub repo, set `GEMINI_API_KEY`, apply both
+1. **Render** — create the service + Postgres, set `GEMINI_API_KEY`, apply both
    migrations. Note the backend URL.
 2. Set `BACKEND_URL` in `frontend/config.js`, commit, push.
-3. **Vercel** — deploy `ai-app-bedtimestory`. Note the frontend URL.
-4. Set `FRONTEND_ORIGINS` on Render to that URL. Redeploy.
+3. **Vercel** — deploy. Read the production alias from the response; don't assume
+   it.
+4. Set `FRONTEND_ORIGINS` on Render to that alias. Redeploy.
 
-**Prerequisite:** Vercel's GitHub App must have access to
-`simonraj79/ai-app-bedtimestory`, which is private —
-<https://github.com/settings/installations> → Vercel → Configure → add the repo.
+Render's Postgres refuses external connections by default (`ipAllowList: []`),
+and reports it as `SSL connection has been closed unexpectedly`. To run
+migrations: add your IP as a `/32`, migrate, remove it. See `CLAUDE.md`.
 
 ⚠️ Render's free Postgres **expires 30 days after creation**. Don't create it
 before you actually deploy.
