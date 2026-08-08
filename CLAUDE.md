@@ -82,6 +82,31 @@ seconds and is the only way a frontend change reaches production.
 
 # Insights — the reasoning behind the shape
 
+## ⭐ Assert on state, never on a system's report of itself
+
+**The single most useful habit in this project.** Every expensive bug here shared
+one shape: something *claimed* success, and the claim was false. Not one of them
+produced an error.
+
+| The claim | The reality | What actually settled it |
+|---|---|---|
+| `Reloading...` in the uvicorn log | The worker never restarted | `grep -c "Started server process"` — still 1 |
+| `Typed "Anaya"` from browser automation | The field was empty; the ref was stale | A screenshot before clicking submit |
+| `cmd \| grep \| sed` printed nothing, so "no secrets" | The pipeline returned **sed's** exit code, so `\|\| echo PASS` was unreachable | `grep -c` and compare the number |
+| Vercel "linked to GitHub" | `link: null`, and the only deployment was a manual upload | Listing **all** projects — a sibling *was* linked, which located the real cause |
+| Postgres `SSL connection closed unexpectedly` | Nothing wrong with SSL; the IP was not allow-listed | Reading `ipAllowList` from the API |
+
+The corrective in each case was the same: **query independent state.**
+`curl /openapi.json` for what the server really serves. A row count for what was
+really written. `git check-ignore -v` for what git really excludes. A screenshot
+for what the page really contains.
+
+Two rules that follow:
+
+1. **A check that cannot fail is not a check.** Before trusting a safety check,
+   make it fail on purpose. If you can't, you have a comment.
+2. **Silence is not success.** Assert on a number, not on the absence of output.
+
 ## Single-turn is a design decision, not an omission
 
 Every request sends exactly `[systemInstruction, one user message]`. The model
@@ -245,41 +270,85 @@ Inherited from the course's `AGENTS.md`, and they hold here:
 
 # Gotchas — all of these actually happened
 
-## Killing uvicorn by port leaves orphaned workers still serving
+## ⚠️ THE EXPENSIVE ONE: the running server is not the code you just wrote
 
-`uvicorn --reload` spawns its real worker via `multiprocessing.spawn`, so **the
-worker's command line contains no "uvicorn"** — it reads
-`python -c "from multiprocessing.spawn import spawn_main; ..."`. Both of these
-miss it:
+**This has cost more time than every other bug in this project combined — three
+separate incidents, hours in total.** Read this before debugging anything that
+"should work".
+
+Every time, the story was the same: the code on disk was **correct**, and the
+process answering requests was running **something else**.
+
+### The three incidents
+
+| Symptom | What was actually true |
+|---|---|
+| `/bedtime` 404 while `/chat` 200, from a `main.py` defining both | A stale worker was serving; killing by port only killed the listener and the reloader respawned it |
+| `GET /` 500 and `OPTIONS` 405 after deleting `app/templates/` | Same stale worker, now failing on templates that no longer existed |
+| A new 429 handler had no effect for ~10 minutes | uvicorn logged `Reloading...` and **the worker never restarted** |
+
+### Why the usual kills miss
+
+`uvicorn --reload` runs a reloader parent that spawns the real worker through
+`multiprocessing.spawn`. **The worker's command line contains no "uvicorn"** — it
+reads `python -c "from multiprocessing.spawn import spawn_main; ..."`. So both of
+these silently fail:
 
 ```powershell
-# WRONG - kills the listener; the parent respawns a replacement
+# WRONG - kills the listener; the parent immediately respawns a replacement
 Get-NetTCPConnection -LocalPort 8000 | Stop-Process
 # WRONG - the worker's command line does not match "uvicorn"
 ... | Where-Object { $_.CommandLine -match "uvicorn" }
 ```
 
-Symptom: a **stale server answers with old code**. New routes 404, edits do
-nothing, and the uvicorn log shows startup but *no access-log lines*. It bit
-twice — the second time after deleting `app/templates/`, where the stale worker
-kept 500ing on templates that no longer existed.
+### `Reloading...` is a claim, not a confirmation
 
-**Diagnose by asking the running app**, never by re-reading the file:
+The third incident is the nastiest, because the log **says it worked**:
 
-```bash
-curl -s http://localhost:8000/openapi.json | python -c "import json,sys; print(sorted(json.load(sys.stdin)['paths']))"
+```
+WARNING:  WatchFiles detected changes in 'app\services\gemini_service.py'. Reloading...
 ```
 
-**Kill properly:**
+…and nothing restarted. The proof is the pair of lines, not the promise:
+
+```bash
+grep -c "Started server process" <log>   # must INCREASE on every reload
+grep -c "Shutting down" <log>            # should appear alongside it
+```
+
+One `Started server process` and no `Shutting down` after a `Reloading...` means
+the old process is still serving. There is no error anywhere.
+
+### The three tells
+
+1. **No access-log lines** for requests you know you just made → a different
+   process is answering.
+2. **`Reloading...` with no new `Started server process`** → the reload didn't happen.
+3. **A listening socket owned by a dead PID** → a child still holds the inherited
+   handle.
+
+### What to do instead
+
+**Ask the running system what it is, never re-read the file:**
+
+```bash
+curl -s http://localhost:8000/openapi.json \
+  | python -c "import json,sys; print(sorted(json.load(sys.stdin)['paths']))"
+```
+
+**Kill properly — match spawn children, then confirm the port is free:**
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
   Where-Object { $_.CommandLine -match "uvicorn|spawn_main|http.server" } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Start-Sleep -Seconds 3
+Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
 ```
 
-Then confirm the port is free. A listening socket owned by a dead PID means a
-child still holds the inherited handle.
+**When a change must be verified, prefer no `--reload` at all.** Start the server
+fresh for the test run. A deterministic restart costs three seconds; a phantom
+reload cost ten minutes and a wrong diagnosis.
 
 ## Port 3000 is taken by Docker Desktop on this machine
 
@@ -520,22 +589,6 @@ specificity before reordering anything.
 Related: `python -m http.server` caches CSS. After a stylesheet change a normal
 reload can show the old file — hard-reload (`Ctrl+Shift+R`) before concluding the
 CSS is wrong.
-
-## `Reloading...` in the uvicorn log does not mean it reloaded
-
-WatchFiles logged `WARNING: WatchFiles detected changes ... Reloading...` and the
-worker **never restarted** — `Started server process` still appeared exactly once
-with no `Shutting down`. The old code served for another ten minutes while a new
-429 handler sat in the file doing nothing.
-
-Check the pair, not the promise:
-
-```bash
-grep -c "Started server process" <log>   # must increase on every reload
-```
-
-If it has not increased, kill by process (see the orphaned-workers gotcha) and
-start again.
 
 ## Browser automation: element refs go stale after navigation
 
