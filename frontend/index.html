@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Apps</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>AI Apps</h1>
+    <p class="lede">Two single-turn apps. One question in, one answer out.</p>
+
+    <div class="apps">
+        <a class="app-card" href="chat.html">
+            <span class="icon">💬</span>
+            <span class="name">Chat</span>
+            <span class="desc">Ask a question, get a short answer. Every exchange is saved.</span>
+        </a>
+
+        <a class="app-card" href="story.html">
+            <span class="icon">🌙</span>
+            <span class="name">Bedtime Story</span>
+            <span class="desc">A gentle story built around your child's name and a theme.</span>
+        </a>
+    </div>
+
+    <p id="status" class="status"></p>
+
+    <script src="config.js"></script>
+    <script>
+    // Surfaces a dead or sleeping backend here, rather than as a confusing
+    // "Failed to fetch" the first time someone presses a button.
+    fetch(`${BACKEND_URL}/healthz`)
+      .then(r => r.json())
+      .then(d => {
+        const el = document.getElementById("status");
+        if (d.gemini && d.postgres) return;
+        el.textContent = `Backend degraded — gemini: ${d.gemini}, postgres: ${d.postgres}`;
+      })
+      .catch(() => {
+        document.getElementById("status").textContent =
+          `Cannot reach the backend at ${BACKEND_URL}. If it is on Render's free tier it may be waking up — wait 30-60s and reload.`;
+      });
+    </script>
+</body>
+</html>

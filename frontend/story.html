@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bedtime Story — AI Apps</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bedtime">
+    <a class="back" href="index.html">&larr; All apps</a>
+    <h1>🌙 Bedtime Story</h1>
+
+    <label for="child-name">Who is the story for?</label>
+    <input id="child-name" type="text" placeholder="Maya">
+
+    <label for="theme">What should it be about?</label>
+    <input id="theme" type="text" placeholder="a sleepy dragon who lost his slippers">
+
+    <button id="tell-btn">Tell me a story</button>
+
+    <div id="answer"></div>
+    <div id="error"></div>
+
+    <h2>Earlier stories</h2>
+    <ol id="history">No stories yet.</ol>
+
+    <script src="config.js"></script>
+    <script>
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    function renderHistory(items) {
+      const list = document.getElementById("history");
+      if (!items || items.length === 0) {
+        list.innerHTML = "<li>No stories yet.</li>";
+        return;
+      }
+      list.innerHTML = items.map(it =>
+        `<li>
+           <div class="q">${escapeHtml(it.child_name)} — ${escapeHtml(it.theme)}</div>
+           <div class="a">${escapeHtml(it.story)}</div>
+           <div class="meta">${it.model_name} · ${it.created_at}</div>
+         </li>`
+      ).join("");
+    }
+
+    async function loadHistory() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/stories`);
+        if (r.ok) renderHistory(await r.json());
+      } catch (e) {
+        document.getElementById("error").textContent =
+          `Cannot reach the backend at ${BACKEND_URL}.`;
+      }
+    }
+
+    document.getElementById("tell-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("tell-btn");
+      const errEl = document.getElementById("error");
+      const ansEl = document.getElementById("answer");
+      errEl.textContent = "";
+      ansEl.textContent = "Once upon a time…";
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${BACKEND_URL}/story`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            child_name: document.getElementById("child-name").value,
+            theme: document.getElementById("theme").value,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Request failed");
+        ansEl.textContent = data.story;
+        renderHistory(data.history);
+      } catch (e) {
+        ansEl.textContent = "";
+        errEl.textContent = e.message === "Failed to fetch"
+          ? `Cannot reach the backend at ${BACKEND_URL}. Check it is running and that this origin is allowed by CORS.`
+          : e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    loadHistory();
+    </script>
+</body>
+</html>

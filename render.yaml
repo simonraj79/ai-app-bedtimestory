@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: ai-apps
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    # Python version comes from .python-version (3.13). PYTHON_VERSION is not
+    # used here: as an env var Render demands a fully qualified patch version,
+    # which breaks whenever that exact patch is unavailable.
+    envVars:
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      # Set in the Render dashboard - never committed.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Comma-separated origins allowed to call this API. Set to your Vercel URL
+      # once the frontend is deployed, e.g. https://ai-apps.vercel.app
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-apps-db
+          property: connectionString
+
+databases:
+  # Free tier expires 30 days after creation.
+  - name: ai-apps-db
+    plan: free
+    databaseName: ai_apps
+    user: ai_apps

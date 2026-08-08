@@ -1,0 +1,12 @@
+# Vercel deploys the static frontend/ only. Keep the Python backend out, or
+# Vercel detects requirements.txt and tries to build it as a serverless function.
+app/
+scripts/
+sql/
+venv/
+__pycache__/
+requirements.txt
+render.yaml
+Procfile
+.python-version
+*.md

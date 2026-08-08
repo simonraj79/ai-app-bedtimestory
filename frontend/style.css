@@ -1,0 +1,197 @@
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 42rem;
+    margin: 2rem auto;
+    padding: 0 1rem 4rem;
+    background: #14161c;
+    color: #e6e8ee;
+    line-height: 1.6;
+}
+
+/* The bedtime app gets a warmer, softer treatment. */
+body.bedtime {
+    font-family: Georgia, "Iowan Old Style", serif;
+    background: #131a2c;
+    color: #e8e3d8;
+    line-height: 1.65;
+}
+
+h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+
+body.bedtime h1 {
+    font-weight: normal;
+}
+
+h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #8b93a7;
+    border-top: 1px solid #262a35;
+    padding-top: 1.2rem;
+    margin-top: 2.5rem;
+}
+
+body.bedtime h2 {
+    font-weight: normal;
+    color: #8f9bb8;
+    border-top-color: #2a3450;
+}
+
+.lede {
+    color: #8b93a7;
+    margin-top: -0.5rem;
+}
+
+.back {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    color: #8b93a7;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.back:hover {
+    color: #e6e8ee;
+}
+
+/* --- Hub ------------------------------------------------------------------ */
+
+.apps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.app-card {
+    display: block;
+    padding: 1.3rem;
+    background: #1c1f28;
+    border: 1px solid #262a35;
+    border-radius: 10px;
+    text-decoration: none;
+    color: inherit;
+}
+
+.app-card:hover {
+    border-color: #4f7cf7;
+}
+
+.app-card .icon {
+    display: block;
+    font-size: 1.6rem;
+}
+
+.app-card .name {
+    display: block;
+    font-weight: 600;
+    margin-top: 0.4rem;
+}
+
+.app-card .desc {
+    display: block;
+    font-size: 0.87rem;
+    color: #8b93a7;
+    margin-top: 0.3rem;
+}
+
+/* --- Forms ---------------------------------------------------------------- */
+
+label {
+    display: block;
+    margin: 1rem 0 0.3rem;
+    font-size: 0.9rem;
+    color: #8f9bb8;
+}
+
+textarea,
+input[type="text"] {
+    width: 100%;
+    padding: 0.7rem;
+    font: inherit;
+    font-size: 1rem;
+    color: #e6e8ee;
+    background: #1c1f28;
+    border: 1px solid #262a35;
+    border-radius: 8px;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+body.bedtime textarea,
+body.bedtime input[type="text"] {
+    color: #e8e3d8;
+    background: #1c2438;
+    border-color: #2a3450;
+}
+
+button {
+    margin-top: 1rem;
+    padding: 0.55rem 1.3rem;
+    font: inherit;
+    font-weight: 500;
+    color: #fff;
+    background: #4f7cf7;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+body.bedtime button {
+    color: #131a2c;
+    background: #e5c98a;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+/* --- Output --------------------------------------------------------------- */
+
+#answer {
+    margin-top: 1.5rem;
+    white-space: pre-wrap;
+}
+
+#error {
+    margin-top: 1rem;
+    color: #ff9b9b;
+}
+
+#history {
+    padding-left: 1.2rem;
+    color: #b6bccb;
+}
+
+body.bedtime #history {
+    color: #b9c2d8;
+}
+
+#history li {
+    margin-bottom: 1.3rem;
+}
+
+#history .q {
+    color: #e6e8ee;
+    font-weight: 500;
+}
+
+body.bedtime #history .q {
+    color: #e5c98a;
+    font-weight: normal;
+}
+
+#history .a {
+    white-space: pre-wrap;
+    font-size: 0.92rem;
+}
+
+#history .meta {
+    font-size: 0.78rem;
+    color: #6a7186;
+    margin-top: 0.3rem;
+}

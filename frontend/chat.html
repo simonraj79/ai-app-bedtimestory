@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chat — AI Apps</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <a class="back" href="index.html">&larr; All apps</a>
+    <h1>💬 Chat</h1>
+
+    <textarea id="question" rows="3" placeholder="Ask a question…"></textarea>
+    <button id="ask-btn">Ask</button>
+
+    <div id="answer"></div>
+    <div id="error"></div>
+
+    <h2>Recent</h2>
+    <ol id="history">No questions yet.</ol>
+
+    <script src="config.js"></script>
+    <script>
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    function renderHistory(items) {
+      const list = document.getElementById("history");
+      if (!items || items.length === 0) {
+        list.innerHTML = "<li>No questions yet.</li>";
+        return;
+      }
+      list.innerHTML = items.map(it =>
+        `<li>
+           <div class="q">${escapeHtml(it.question)}</div>
+           <div class="a">${escapeHtml(it.answer)}</div>
+           <div class="meta">${it.model_name} · ${it.created_at}</div>
+         </li>`
+      ).join("");
+    }
+
+    async function loadHistory() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/history`);
+        if (r.ok) renderHistory(await r.json());
+      } catch (e) {
+        document.getElementById("error").textContent =
+          `Cannot reach the backend at ${BACKEND_URL}.`;
+      }
+    }
+
+    document.getElementById("ask-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("ask-btn");
+      const errEl = document.getElementById("error");
+      const ansEl = document.getElementById("answer");
+      errEl.textContent = "";
+      ansEl.textContent = "Thinking…";
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${BACKEND_URL}/ask`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({question: document.getElementById("question").value}),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Request failed");
+        ansEl.textContent = data.answer;
+        renderHistory(data.history);
+      } catch (e) {
+        ansEl.textContent = "";
+        errEl.textContent = e.message === "Failed to fetch"
+          ? `Cannot reach the backend at ${BACKEND_URL}. Check it is running and that this origin is allowed by CORS.`
+          : e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    loadHistory();
+    </script>
+</body>
+</html>

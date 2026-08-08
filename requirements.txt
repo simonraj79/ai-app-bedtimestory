@@ -1,0 +1,13 @@
+# Pinned dependencies for the FastAPI backend. Add the pinned line here first,
+# then: pip install -r requirements.txt
+#
+# Pinned to minor version (patch floats) so security fixes arrive without
+# surprise API changes. Audited 8 Aug 2026 against Python 3.13.
+#
+# No Jinja2: the frontend is static and deploys separately to Vercel.
+
+fastapi==0.141.*
+uvicorn[standard]==0.52.*
+httpx==0.28.*
+psycopg[binary]==3.3.*
+python-dotenv==1.2.*

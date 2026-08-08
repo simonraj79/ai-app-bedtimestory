@@ -1,0 +1,15 @@
+# Secrets - app runtime
+.env
+.env.txt
+
+# Secrets - control plane (deployment tooling only, never deployed)
+.render.env
+.vercel.env
+
+# Vercel CLI local project link
+.vercel/
+
+# Python
+venv/
+__pycache__/
+*.pyc
