@@ -7,6 +7,7 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 |---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | Ask a question, get a short answer. Every exchange is saved. |
 | 2 | 🌙 Bedtime Story | `story.html` | A gentle ~200-word story built around a child's name and a theme. |
+| 📖 | Your reading | `mystats.html` | Your own totals — words, read-aloud time, reading level, who each story was for. Linked from the story page. |
 | 📊 | Usage | `admin.html` | Owner-only: who signed in, how often, and what they made. Not linked from the hub. |
 
 **Single-turn** means one request in, one answer out. The model never sees
@@ -17,10 +18,8 @@ into the prompt.
 nobody else can read them. Pages still load signed out — the button is just
 disabled until you sign in.
 
-Sign-in appears **only on the two app pages**, never on the hub. The hub calls
-no authenticated endpoint, so a sign-in bar there bought nothing and cost an
-extra prompt: people were asked once on the hub and again on whichever app they
-opened. The hub carries a short *How it works* instead.
+Sign-in appears on the two app pages only, not on the hub. The hub carries a
+short *How it works* instead.
 
 ## 🚀 Live
 
@@ -29,30 +28,14 @@ opened. The hub carries a short *How it works* instead.
 | **App** | <https://ai-app-bedtimestory.vercel.app> |
 | **API** | <https://ai-app-bedtimestory.onrender.com> |
 | Health | <https://ai-app-bedtimestory.onrender.com/healthz> |
+| Your reading | <https://ai-app-bedtimestory.vercel.app/mystats.html> |
+| Usage (owner only) | <https://ai-app-bedtimestory.vercel.app/admin.html> |
 
-Deployed 8 August 2026 and verified in a real browser: both apps answer, both
-persist to Postgres, CORS allows the Vercel origin and refuses others.
+`git push origin master` deploys both halves — Render rebuilds the backend,
+Vercel rebuilds the frontend.
 
-> **🗄️ Postgres plan and expiry — read them off the instance, don't assume.**
-> Render puts both on the resource itself, so there is no need to remember or
-> argue about it:
->
-> ```bash
-> curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
->   https://api.render.com/v1/postgres/dpg-d9ra1q2fngtc73ctho80-a \
->   | python -c "import json,sys; d=json.load(sys.stdin); print(d['plan'], d.get('expiresAt','— no expiry'))"
-> ```
->
-> Free instances carry an `expiresAt`; paid ones don't. Worth checking rather
-> than trusting either memory or a doc, because **accounts now live in the same
-> database as the stories** — whatever it reports applies to every sign-in too,
-> not just the story log.
->
-> **✅ Both halves deploy on push.** Vercel was linked to GitHub on 8 Aug 2026,
-> so `git push origin master` now redeploys the backend *and* the frontend.
->
-> **⏳ First request after 15 minutes idle takes 30–60s** — Render's free tier
-> sleeps. The page loads instantly (CDN); only the first API call waits.
+The backend sleeps after 15 minutes idle, so the first request after a quiet
+spell takes 30–60s. The pages themselves load instantly from the CDN.
 
 ## Architecture
 
@@ -91,6 +74,7 @@ app/                       backend - API only, no HTML
 frontend/                  frontend - static, deploys to Vercel
   index.html               hub - no sign-in, cards + How it works
   chat.html  story.html    the two apps - sign-in lives here
+  mystats.html             the reader's own totals, linked from story.html
   admin.html               owner-only usage, not linked from the hub
   config.js                BACKEND_URL + escapeHtml + the sign-in client
   style.css
@@ -205,35 +189,32 @@ they show up as *"(before sign-in)"* on the usage page rather than being dropped
 
 Data survives `docker stop`/`start`; lost only on `docker rm`.
 
-## Who is using it — the usage page
+## Analytics
 
-**<https://ai-app-bedtimestory.vercel.app/admin.html>**, restricted to
-`ADMIN_EMAIL`. Not linked from the hub — bookmark it. Anyone else who finds the
-URL gets `403`, because the gate is checked on the server; the missing link is
-tidiness, not security.
+Two views. Both need a signed-in caller; each shows only what that caller is
+entitled to see.
+
+**Your reading** — `mystats.html`, linked from the story page. Anyone signed in
+gets their own totals: stories, words, read-aloud time, average length and
+reading level, who each story was for, and what they were about.
+
+**Usage** — `admin.html`, restricted to `ADMIN_EMAIL`. Not linked from the hub;
+bookmark it. Anyone else who finds the URL gets `403` — the gate is on the
+server, so the missing link is tidiness rather than security.
 
 | | |
 |---|---|
 | Tiles | people · sign-ins · stories · questions |
-| Last 14 days | per day: distinct people, sign-ins, stories, questions, with a bar scaled to the busiest day in the window |
+| Last 14 days | per day: distinct people, sign-ins, stories, questions |
 | People | per person: sign-ins, stories, questions, joined, last seen |
+| Story genres | per genre: stories, average words, reading level |
 | Recent activity | the last 20 actions across both apps |
 
-**Counting sign-ins needs an event, not a column.** `users.last_seen_at` says
-when someone was last about, but it is overwritten on every request, so it can
-never answer *how many times* or *how many people on Tuesday*. Hence `sign_ins`.
-
-The trap is that the auth dependency runs on **every authenticated request** —
-writing a row there would log requests, so one story would look like several.
-`token_iat` is the ID token's issued-at claim: fixed for the life of a token,
-different only when Google issues a new one, which is exactly what a sign-in is.
-`UNIQUE (user_id, token_iat)` and `ON CONFLICT DO NOTHING` then do the counting.
-Verified: 50 inserts with one token produce **1** row; a new token produces a 2nd.
-
-The daily series is built with `generate_series`, not `GROUP BY` — a day with no
-activity has no rows to group, so grouping alone drops quiet days and a 14-day
-chart draws a misleadingly continuous line. The raw queries are in `CLAUDE.md` →
-*Reading the tracking data*.
+Sign-ins are counted from the `sign_ins` table rather than `users.last_seen_at`,
+which is overwritten on every request and so cannot answer "how many times".
+Rows are deduped on the ID token's `iat` claim, so a token reused across many
+requests counts once. SQL for both views is in `CLAUDE.md` → *Reading the
+tracking data*.
 
 ## API
 
@@ -244,6 +225,7 @@ chart draws a misleadingly continuous line. The raw queries are in `CLAUDE.md` �
 | `GET` | `/history` | 🔐 | Your 10 most recent exchanges |
 | `POST` | `/story` | 🔐 | `{child_name, theme, length?}` → `{story, history[]}`. `length` is `short` \| `medium` \| `long`, defaulting to `medium`. |
 | `GET` | `/stories` | 🔐 | Your 10 most recent stories |
+| `GET` | `/me/stats` | 🔐 | Your own totals across every story you have made — words, read-aloud time, reading level, who each was for, what they were about |
 | `GET` | `/admin/usage` | 🔐 owner | Totals, per-person counts, a 14-day daily series, and the 20 most recent actions |
 | `GET` | `/healthz` | — | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
 
@@ -332,27 +314,24 @@ nothing appears in the backend log at all:
 curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep GOOGLE_CLIENT_ID
 ```
 
-### One sign-in affordance, deliberately
+### One sign-in affordance
 
-`config.js` does **not** call `google.accounts.id.prompt()`. One Tap is a
-*prompt*, not a sign-in: dismissing it leaves you signed out, so it reappeared on
-the next page and read as being asked to sign in twice — and next to the rendered
-button it put two ways to sign in on one screen. It is also the fragile half of
-GIS, needing FedCM, third-party cookie permission and no content blocker, which
-is why it worked on some machines and silently did nothing on others. The
-rendered button needs none of that. `auto_select` went with it; that flag only
-ever applied to One Tap.
+`config.js` does **not** call `google.accounts.id.prompt()`, and has no
+`auto_select`. One Tap is a prompt rather than a sign-in, so dismissing it left
+people signed out and it reappeared on the next page — and it depends on FedCM,
+third-party cookies and no content blocker, so it worked on some machines and
+silently did nothing on others. The rendered button is the only way in. Reasoning
+in full: `CLAUDE.md` → *One Tap is a prompt, not a sign-in*.
 
-With an active Google session the button renders **personalised** — showing the
-account name inside the same iframe. That looks like a "sign in as…" card but is
-one control, not a leftover One Tap overlay.
+With an active Google session that button renders **personalised**, showing the
+account name inside its iframe. It looks like a "sign in as…" card but is one
+control, not a leftover overlay.
 
-`frontend/config.js` — `BACKEND_URL` is **auto-detected** from the hostname:
-localhost talks to the local backend, anything else to production. Nothing to
-edit per environment. It also holds `GOOGLE_CLIENT_ID` and the whole sign-in
-client. Public by definition; **never put a key in `frontend/`** — every visitor
-can read it. The client ID is not a key: this flow has **no client secret**, and
-that is precisely why it was chosen for a static frontend.
+`frontend/config.js` — `BACKEND_URL` is auto-detected from the hostname, so
+there is nothing to edit per environment. It also holds `GOOGLE_CLIENT_ID` and
+the sign-in client. **Never put a key in `frontend/`** — every visitor can read
+it. The client ID is not a key: this flow has no client secret, which is why it
+suits a static frontend.
 
 `.render.env` and `.vercel.env` — **tooling only**. They hold account-wide
 control-plane keys, are gitignored, and must never be deployed. Both tokens were
@@ -417,10 +396,9 @@ Render's Postgres refuses external connections by default (`ipAllowList: []`),
 and reports it as `SSL connection has been closed unexpectedly`. To run
 migrations: add your IP as a `/32`, migrate, remove it. See `CLAUDE.md`.
 
-A **free** Render Postgres carries an `expiresAt` 30 days from creation; a paid
-one doesn't. Read it off the instance rather than assuming either way — the
-one-liner is at the top of this file. If it's free, don't create it before you
-actually intend to deploy.
+A free Render Postgres expires 30 days after it is created, so don't create it
+before you intend to deploy. `GET /v1/postgres/<id>` reports the plan and any
+`expiresAt` if you need to check.
 
 ## Known limits
 
