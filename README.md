@@ -7,7 +7,7 @@ static frontend on Vercel, Gemini for the model, Postgres for the record.
 |---|---|---|---|
 | 1 | 💬 Chat | `chat.html` | Ask a question, get a short answer. Every exchange is saved. |
 | 2 | 🌙 Bedtime Story | `story.html` | A gentle ~200-word story built around a child's name and a theme. |
-| 📊 | Usage | `admin.html` | Owner-only: who has signed in, and what they've made. Not linked from the hub. |
+| 📊 | Usage | `admin.html` | Owner-only: who signed in, how often, and what they made. Not linked from the hub. |
 
 **Single-turn** means one request in, one answer out. The model never sees
 earlier exchanges — the saved history is for *you* to read back, not context fed
@@ -16,6 +16,11 @@ into the prompt.
 **Sign in with Google to use either app.** Your stories and questions are yours;
 nobody else can read them. Pages still load signed out — the button is just
 disabled until you sign in.
+
+Sign-in appears **only on the two app pages**, never on the hub. The hub calls
+no authenticated endpoint, so a sign-in bar there bought nothing and cost an
+extra prompt: people were asked once on the hub and again on whichever app they
+opened. The hub carries a short *How it works* instead.
 
 ## 🚀 Live
 
@@ -28,9 +33,20 @@ disabled until you sign in.
 Deployed 8 August 2026 and verified in a real browser: both apps answer, both
 persist to Postgres, CORS allows the Vercel origin and refuses others.
 
-> **⚠️ The free Postgres expires 2026-09-07.** After that `/healthz` reports
-> `postgres: false` and writes fail. **Accounts live in the same database**, so
-> expiry loses every sign-in too, not just the story log.
+> **🗄️ Postgres plan and expiry — read them off the instance, don't assume.**
+> Render puts both on the resource itself, so there is no need to remember or
+> argue about it:
+>
+> ```bash
+> curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+>   https://api.render.com/v1/postgres/dpg-d9ra1q2fngtc73ctho80-a \
+>   | python -c "import json,sys; d=json.load(sys.stdin); print(d['plan'], d.get('expiresAt','— no expiry'))"
+> ```
+>
+> Free instances carry an `expiresAt`; paid ones don't. Worth checking rather
+> than trusting either memory or a doc, because **accounts now live in the same
+> database as the stories** — whatever it reports applies to every sign-in too,
+> not just the story log.
 >
 > **✅ Both halves deploy on push.** Vercel was linked to GitHub on 8 Aug 2026,
 > so `git push origin master` now redeploys the backend *and* the frontend.
@@ -71,15 +87,18 @@ app/                       backend - API only, no HTML
     auth_service.py        the only file that talks to Google identity
     chat_service.py        save_interaction / fetch_recent_history
     story_service.py       save_story / fetch_recent_stories
-    admin_service.py       fetch_usage - totals, per-person counts, recent feed
+    admin_service.py       fetch_usage - totals, per-person counts, 14-day series, recent feed
 frontend/                  frontend - static, deploys to Vercel
-  index.html  chat.html  story.html  admin.html
+  index.html               hub - no sign-in, cards + How it works
+  chat.html  story.html    the two apps - sign-in lives here
+  admin.html               owner-only usage, not linked from the hub
   config.js                BACKEND_URL + escapeHtml + the sign-in client
   style.css
 sql/001_create_interactions.sql
 sql/002_create_stories.sql
-sql/003_create_users.sql       one row per Google account
+sql/003_create_users.sql       one row per Google account, keyed on google_sub
 sql/004_add_user_id.sql        nullable user_id on both tables + indexes
+sql/005_create_sign_ins.sql    one row per actual sign-in, deduped on token_iat
 scripts/smoke_gemini.py    exercises both apps without touching the database
 render.yaml  Procfile      Render deploy
 vercel.json  .vercelignore Vercel deploy
@@ -130,9 +149,11 @@ docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/001_create_interacti
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/002_create_stories.sql
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/003_create_users.sql
 docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/004_add_user_id.sql
+docker exec -i ai-apps-pg psql -U postgres -d ai_apps < sql/005_create_sign_ins.sql
 ```
 
-In order — `004` adds foreign keys to `users`, so `003` has to exist first.
+In order — `004` and `005` both add foreign keys to `users`, so `003` has to
+exist first.
 
 **2. Backend** — terminal one:
 
@@ -181,10 +202,38 @@ That's the single-turn design: a log of exchanges, not a conversation transcript
 
 Rows written before sign-in existed have `user_id IS NULL` and always will —
 they show up as *"(before sign-in)"* on the usage page rather than being dropped.
-For "who uses this and what do they do", `/admin/usage` has the summary and
-`CLAUDE.md` → *Reading the tracking data* has the queries.
 
 Data survives `docker stop`/`start`; lost only on `docker rm`.
+
+## Who is using it — the usage page
+
+**<https://ai-app-bedtimestory.vercel.app/admin.html>**, restricted to
+`ADMIN_EMAIL`. Not linked from the hub — bookmark it. Anyone else who finds the
+URL gets `403`, because the gate is checked on the server; the missing link is
+tidiness, not security.
+
+| | |
+|---|---|
+| Tiles | people · sign-ins · stories · questions |
+| Last 14 days | per day: distinct people, sign-ins, stories, questions, with a bar scaled to the busiest day in the window |
+| People | per person: sign-ins, stories, questions, joined, last seen |
+| Recent activity | the last 20 actions across both apps |
+
+**Counting sign-ins needs an event, not a column.** `users.last_seen_at` says
+when someone was last about, but it is overwritten on every request, so it can
+never answer *how many times* or *how many people on Tuesday*. Hence `sign_ins`.
+
+The trap is that the auth dependency runs on **every authenticated request** —
+writing a row there would log requests, so one story would look like several.
+`token_iat` is the ID token's issued-at claim: fixed for the life of a token,
+different only when Google issues a new one, which is exactly what a sign-in is.
+`UNIQUE (user_id, token_iat)` and `ON CONFLICT DO NOTHING` then do the counting.
+Verified: 50 inserts with one token produce **1** row; a new token produces a 2nd.
+
+The daily series is built with `generate_series`, not `GROUP BY` — a day with no
+activity has no rows to group, so grouping alone drops quiet days and a 14-day
+chart draws a misleadingly continuous line. The raw queries are in `CLAUDE.md` →
+*Reading the tracking data*.
 
 ## API
 
@@ -195,7 +244,7 @@ Data survives `docker stop`/`start`; lost only on `docker rm`.
 | `GET` | `/history` | 🔐 | Your 10 most recent exchanges |
 | `POST` | `/story` | 🔐 | `{child_name, theme, length?}` → `{story, history[]}`. `length` is `short` \| `medium` \| `long`, defaulting to `medium`. |
 | `GET` | `/stories` | 🔐 | Your 10 most recent stories |
-| `GET` | `/admin/usage` | 🔐 owner | Totals, per-person counts, and the 20 most recent actions |
+| `GET` | `/admin/usage` | 🔐 owner | Totals, per-person counts, a 14-day daily series, and the 20 most recent actions |
 | `GET` | `/healthz` | — | `{"gemini": bool, "postgres": bool}` — always 200; a diagnostic, not a gate |
 
 🔐 means `Authorization: Bearer <google-id-token>`. History is **per user** — the
@@ -273,14 +322,30 @@ client. It is console-only, so this is by hand, once:
    sign-in silently, because it is what the token's `aud` claim is checked
    against.
 
-`frontend/config.js` ships with a placeholder
-(`REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com`). Check the **deployed**
-file, not the one you edited — the failure is at Google's end, so nothing appears
-in the backend log:
+A fresh checkout ships a placeholder
+(`REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com`) in `frontend/config.js`;
+this repo's copy holds the real ID. Either way, check the **deployed** file
+rather than the one you edited — a wrong client ID fails at Google's end, so
+nothing appears in the backend log at all:
 
 ```bash
 curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep GOOGLE_CLIENT_ID
 ```
+
+### One sign-in affordance, deliberately
+
+`config.js` does **not** call `google.accounts.id.prompt()`. One Tap is a
+*prompt*, not a sign-in: dismissing it leaves you signed out, so it reappeared on
+the next page and read as being asked to sign in twice — and next to the rendered
+button it put two ways to sign in on one screen. It is also the fragile half of
+GIS, needing FedCM, third-party cookie permission and no content blocker, which
+is why it worked on some machines and silently did nothing on others. The
+rendered button needs none of that. `auto_select` went with it; that flag only
+ever applied to One Tap.
+
+With an active Google session the button renders **personalised** — showing the
+account name inside the same iframe. That looks like a "sign in as…" card but is
+one control, not a leftover One Tap overlay.
 
 `frontend/config.js` — `BACKEND_URL` is **auto-detected** from the hostname:
 localhost talks to the local backend, anything else to production. Nothing to
@@ -336,7 +401,7 @@ curl -s https://ai-app-bedtimestory.vercel.app/config.js | grep escapeHtml
 CORS needs the frontend's URL. Neither exists first, so it takes two passes:
 
 1. **Render** — create the service + Postgres, set `GEMINI_API_KEY`, apply all
-   four migrations in order. Note the backend URL.
+   five migrations in order. Note the backend URL.
 2. Set `BACKEND_URL` in `frontend/config.js`, commit, push.
 3. **Vercel** — deploy. Read the production alias from the response; don't assume
    it.
@@ -352,8 +417,10 @@ Render's Postgres refuses external connections by default (`ipAllowList: []`),
 and reports it as `SSL connection has been closed unexpectedly`. To run
 migrations: add your IP as a `/32`, migrate, remove it. See `CLAUDE.md`.
 
-⚠️ Render's free Postgres **expires 30 days after creation**. Don't create it
-before you actually deploy.
+A **free** Render Postgres carries an `expiresAt` 30 days from creation; a paid
+one doesn't. Read it off the instance rather than assuming either way — the
+one-liner is at the top of this file. If it's free, don't create it before you
+actually intend to deploy.
 
 ## Known limits
 
@@ -405,6 +472,8 @@ everyone's data — which is exactly what `/stories` did before sign-in existed.
 | `origin_mismatch` when the Google button is clicked | The page's origin isn't authorized on the OAuth client | Add it as an **authorized JavaScript origin** — no trailing slash, no path. Allow ~5 min to propagate |
 | Signed in fine, `/admin/usage` says "for the app owner only" | Signed in as a different Google account than `ADMIN_EMAIL` | Check which Chrome profile the browser used, then sign out and back in |
 | The Google button never appears | `accounts.google.com` blocked by a content blocker or network | The page says so where the button would be — there's no fallback |
+| The Google button renders as a bare "G" icon | Its container has no width basis, so Google's iframe collapses | `#g-signin` needs a `min-width`. `renderButton`'s `width` option is a hint the iframe can't honour when the flex item has no size |
+| Looks like a second sign-in prompt on every page | One Tap (`prompt()`) was reintroduced, or you're seeing the personalised button | Check for a real call, not comment text: `grep` matches the comment explaining its removal, and `Function.toString()` preserves comments. Strip them first |
 | `/healthz` shows `postgres: false` | Container not running | `docker start ai-apps-pg` |
 | Request hangs ~10s then 502 | Postgres unreachable; Windows blackholes the closed port | Start the container. `connect_timeout=5` makes this fail in seconds, not forever |
 | `ModuleNotFoundError: No module named 'app'` | Ran a script by path | `python -m scripts.smoke_gemini` from the project root |
