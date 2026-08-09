@@ -1,6 +1,8 @@
 import os
 
+import cachecontrol
 import psycopg
+import requests
 from psycopg.rows import dict_row
 from fastapi import Depends, HTTPException, Request
 from google.auth.exceptions import TransportError
@@ -18,6 +20,15 @@ GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 # The single address allowed to read /admin/usage.
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 
+# google-auth fetches Google's signing certs inside every verify call and does
+# no caching of its own - a Google round trip per authenticated request, and an
+# outbound call anyone could trigger with a made-up Bearer value. CacheControl
+# obeys the Cache-Control max-age Google serves the certs with, so the refresh
+# schedule stays Google's decision, not ours.
+_google_certs_request = google_requests.Request(
+    session=cachecontrol.CacheControl(requests.Session())
+)
+
 
 def current_user(request: Request) -> CurrentUser:
     """Verify the caller's Google ID token and return the user row it belongs to."""
@@ -29,7 +40,7 @@ def current_user(request: Request) -> CurrentUser:
         # Checks the signature, `aud` against our client id, `iss`, and `exp`.
         claims = id_token.verify_oauth2_token(
             header.removeprefix("Bearer "),
-            google_requests.Request(),
+            _google_certs_request,
             GOOGLE_CLIENT_ID,
         )
     except ValueError:

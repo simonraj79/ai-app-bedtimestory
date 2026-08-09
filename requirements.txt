@@ -19,3 +19,7 @@ python-dotenv==1.2.*
 # clients - httpx is ours, requests belongs to google-auth's transport. Do not
 # "tidy" it into httpx; there is no supported adapter for that.
 google-auth[requests]==2.56.*
+# Caches Google's signing certs between verifications, honouring the max-age
+# Google serves them with. Without it every authenticated request - and every
+# made-up Bearer value - cost an outbound call to Google's cert endpoint.
+cachecontrol==0.14.*
