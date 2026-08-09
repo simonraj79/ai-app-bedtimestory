@@ -6,6 +6,15 @@
   "outputDirectory": "frontend",
   "headers": [
     {
+      "source": "/admin.html",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; connect-src 'self' https://ai-app-bedtimestory.onrender.com https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
         {

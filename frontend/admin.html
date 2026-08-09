@@ -66,138 +66,15 @@
         <ol id="recent"><li class="empty">Nothing yet.</li></ol>
     </div>
 
+    <!-- No inline <script> and no inline on* handler anywhere on this page, so
+         /admin.html can be served without 'unsafe-inline' in script-src. See
+         vercel.json. The Google library is appended by admin.js rather than
+         carrying an onload="" attribute here, which would have needed the very
+         directive this page is dropping.
+
+         Both files stay at the end of <body>: admin.js reads elements by id at
+         top level, so the DOM has to exist before it runs. -->
     <script src="config.js"></script>
-    <script>
-    const $ = id => document.getElementById(id);
-    const errEl = $("error"), usageEl = $("usage");
-
-    // Every field below came out of the database, so every field goes through
-    // escapeHtml - counts included, because a count is only a number until the
-    // day the query returns something else.
-    function renderUsage(data) {
-      $("totals").innerHTML = [
-        [data.totals.users, "people"],
-        [data.totals.sign_ins, "sign-ins"],
-        [data.totals.stories, "stories"],
-        [data.totals.questions, "questions"],
-      ].map(([n, k]) => `
-        <div class="stat">
-          <span class="n">${escapeHtml(String(n))}</span>
-          <span class="k">${escapeHtml(k)}</span>
-        </div>`).join("");
-
-      // name and last_seen_at are the two columns that can legitimately be
-      // empty; escapeHtml calls .replace, so a null would throw and take the
-      // whole page down rather than leaving one blank cell.
-      // Bars are scaled against the busiest day in the window, not a fixed
-      // maximum: a quiet fortnight should still show its own shape rather than
-      // fourteen invisible slivers.
-      const busiest = Math.max(1, ...data.daily.map(d => d.sign_ins + d.stories + d.questions));
-      $("daily").innerHTML = data.daily.map(d => {
-        const total = d.sign_ins + d.stories + d.questions;
-        const pct = Math.round((total / busiest) * 100);
-        return `
-        <tr${total ? "" : ' class="quiet"'}>
-          <td class="when">${escapeHtml(d.day)}</td>
-          <td class="num">${escapeHtml(String(d.people))}</td>
-          <td class="num">${escapeHtml(String(d.sign_ins))}</td>
-          <td class="num">${escapeHtml(String(d.stories))}</td>
-          <td class="num">${escapeHtml(String(d.questions))}</td>
-          <td class="bar-h"><span class="bar" style="width:${pct}%"></span></td>
-        </tr>`;
-      }).join("");
-
-      $("users").innerHTML = data.users.map(u => `
-        <tr>
-          <td>
-            <span class="who">${escapeHtml(u.name || "—")}</span>
-            <span class="mail">${escapeHtml(u.email)}</span>
-            <span class="joined">joined ${escapeHtml(u.created_at)}</span>
-          </td>
-          <td class="num">${escapeHtml(String(u.sign_ins))}</td>
-          <td class="num">${escapeHtml(String(u.stories))}</td>
-          <td class="num">${escapeHtml(String(u.questions))}</td>
-          <td class="when">${escapeHtml(u.last_seen_at || "—")}</td>
-        </tr>`).join("");
-
-      // Genres come from a keyword heuristic over the story text, so this is a
-      // rough shape of what gets asked for, not a taxonomy. Rendered before the
-      // recent-activity block below, which returns early when it is empty.
-      // avg_grade goes through readingBand for the same reason it does on the
-      // story page: "3.2" is a number, "easy, about age 8" is an answer.
-      const genres = data.genres || [];
-      $("genres-section").hidden = !genres.length;
-      $("genres").innerHTML = genres.map(g => `
-        <tr>
-          <td class="genre">${escapeHtml(g.genre || "—")}</td>
-          <td class="num">${escapeHtml(String(g.stories))}</td>
-          <td class="num">${escapeHtml(typeof g.avg_words === "number" ? String(Math.round(g.avg_words)) : "—")}</td>
-          <td>${escapeHtml(readingBand(g.avg_grade))}</td>
-        </tr>`).join("");
-
-      const recent = $("recent");
-      if (!data.recent.length) {
-        recent.innerHTML = '<li class="empty">Nothing yet.</li>';
-        return;
-      }
-      recent.innerHTML = data.recent.map(r => `
-        <li>
-          <span class="kind">${escapeHtml(r.kind)}</span>
-          <span class="detail">${escapeHtml(r.detail)}</span>
-          <span class="meta">${escapeHtml(r.email)} · ${escapeHtml(r.created_at)}</span>
-        </li>`).join("");
-    }
-
-    async function loadUsage() {
-      const headers = authHeaders();
-      if (!headers) return;
-      errEl.textContent = "";
-      try {
-        const r = await fetch(`${BACKEND_URL}/admin/usage`, {headers});
-        if (r.status === 401) return handleAuthExpired(errEl);
-        if (r.status === 403) {
-          // Signed in fine, just not the owner. Say that, rather than showing
-          // the backend's wording or an empty page that looks broken.
-          errEl.textContent = "This page is for the app owner only.";
-          return;
-        }
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.detail || "Request failed");
-        renderUsage(data);
-        usageEl.hidden = false;
-      } catch (e) {
-        errEl.textContent = e.message === "Failed to fetch"
-          ? "Cannot reach the server. If it was asleep, wait a moment and try again."
-          : e.message;
-      }
-    }
-
-    const hintEl = $("auth-hint"), whoEl = $("auth-who");
-    const signoutBtn = $("signout"), buttonEl = $("g-signin");
-
-    initGoogleAuth({
-      buttonEl,
-      onSignIn: user => {
-        whoEl.textContent = `Signed in as ${user.name || user.email}`;
-        whoEl.hidden = false;
-        signoutBtn.hidden = false;
-        hintEl.hidden = true;
-        buttonEl.hidden = true;
-        loadUsage();
-      },
-      onSignOut: () => {
-        whoEl.hidden = true;
-        signoutBtn.hidden = true;
-        hintEl.hidden = false;
-        buttonEl.hidden = false;
-        // Other people's emails must not stay on screen after sign-out.
-        usageEl.hidden = true;
-      },
-    });
-    signoutBtn.addEventListener("click", signOut);
-    </script>
-
-    <script src="https://accounts.google.com/gsi/client" async defer
-            onload="googleLibraryLoaded()" onerror="googleLibraryFailed()"></script>
+    <script src="admin.js"></script>
 </body>
 </html>
