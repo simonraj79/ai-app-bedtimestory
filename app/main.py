@@ -43,9 +43,11 @@ app.add_middleware(
 )
 
 
+# Deliberately says nothing: the app list and route map belong to the two known
+# frontends, not to whoever curls the root. A bare 200 still answers "is it up".
 @app.get("/")
 def root():
-    return {"api": "AI Apps", "apps": ["chat", "bedtime"], "health": "/healthz"}
+    return {"status": "ok"}
 
 
 # --- App 1: Chat -------------------------------------------------------------

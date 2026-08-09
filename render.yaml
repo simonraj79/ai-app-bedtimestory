@@ -4,7 +4,8 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # --no-server-header: don't advertise the stack in every response.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-server-header
     healthCheckPath: /healthz
     # Python version comes from .python-version (3.13). PYTHON_VERSION is not
     # used here: as an env var Render demands a fully qualified patch version,
